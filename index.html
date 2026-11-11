@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#000000">
+<title>すうがくRPG</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:#000;color:#fcfcfc;overscroll-behavior:none;touch-action:manipulation;user-select:none;-webkit-user-select:none}
+body{font-family:"DotGothic16","MS Gothic","Osaka-Mono","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",monospace;font-weight:bold}
+button,input,textarea{font:inherit;color:inherit}
+#app{position:relative;width:min(100vw,56vh);height:100vh;margin:0 auto;display:flex;flex-direction:column;background:#0f0f1b;overflow:hidden;padding-bottom:env(safe-area-inset-bottom)}
+@supports(height:100dvh){#app{width:min(100vw,56dvh);height:100dvh}}
+#hud{flex:none;height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 6px;font-size:13px;background:#000;border-bottom:2px solid #fcfcfc;white-space:nowrap}
+#hud .low{color:#f8d820}#hud .cmb{color:#fc9838}
+#hudr{display:flex;gap:4px}
+.mini{background:#000;border:1px solid #bcbcbc;border-radius:4px;font-size:12px;padding:2px 6px;min-height:24px}
+#stage{flex:none;position:relative;line-height:0;overflow:hidden;background:#000}
+#cv{width:100%;height:auto;display:block;image-rendering:crisp-edges;image-rendering:pixelated}
+#ename{display:none;position:absolute;left:0;right:0;top:4px;text-align:center;font-size:14px;line-height:1.2;text-shadow:1px 1px 0 #000,-1px 1px 0 #000,1px -1px 0 #000,-1px -1px 0 #000}
+#ename .bar{display:block;width:50%;height:8px;margin:3px auto 0;border:2px solid #fcfcfc;background:#000}
+#ename .bar b{display:block;height:100%;background:#58d854;transition:width .3s steps(6)}
+#toast{position:absolute;left:0;right:0;top:8px;text-align:center;font-size:14px;line-height:1.3;opacity:0;pointer-events:none}
+#toast.on{animation:toast 2.6s steps(12) forwards}
+#toast::before{content:"";}
+#toast{text-shadow:2px 2px 0 #000,-1px -1px 0 #000}
+@keyframes toast{0%{opacity:0}10%,80%{opacity:1}100%{opacity:0}}
+#banner{display:none;position:absolute;left:0;right:0;top:28%;text-align:center;line-height:1.35;text-shadow:2px 2px 0 #000,-2px 2px 0 #000,2px -2px 0 #000,-2px -2px 0 #000;pointer-events:none}
+#banner.on{display:block;animation:pop .5s steps(5)}
+#banner .b1{font-size:24px;color:#f8d820}#banner .b2{font-size:18px}
+@keyframes pop{0%{transform:scale(.2)}70%{transform:scale(1.2)}100%{transform:scale(1)}}
+#cutin{display:none;position:absolute;inset:0;background:rgba(0,0,0,.85);align-items:center;line-height:1.3}
+#cutin.on{display:flex}
+#cutin .band{width:100%;display:flex;align-items:center;gap:10px;padding:8px 12px;background:#881400;border-top:3px solid #fcfcfc;border-bottom:3px solid #fcfcfc;animation:slide .35s steps(7)}
+#cutin canvas{width:72px;height:72px;image-rendering:pixelated;flex:none}
+#cutin .cn{font-size:16px;color:#f8d820}#cutin .cl{font-size:15px;margin-top:4px}
+@keyframes slide{0%{transform:translateX(100%)}100%{transform:none}}
+#fx{position:absolute;inset:0;pointer-events:none;opacity:0}
+#fx.flash{background:#fff;animation:blinkfx .15s steps(2) 3}
+#fx.hurt{background:#d82800;opacity:.45}
+#fx.fade{background:#000;opacity:1}
+@keyframes blinkfx{0%{opacity:1}100%{opacity:0}}
+.shake{animation:shake .25s steps(5)}
+@keyframes shake{0%{transform:translate(4px,0)}25%{transform:translate(-4px,2px)}50%{transform:translate(3px,-2px)}75%{transform:translate(-2px,1px)}100%{transform:none}}
+#panel{flex:1;min-height:0;display:flex;flex-direction:column;padding:6px;gap:6px;overflow:hidden}
+.win{border:3px solid #fcfcfc;border-radius:6px;background:#000}
+#msg{flex:1;min-height:0;overflow-y:auto;padding:8px 10px;font-size:16px;line-height:1.7;position:relative}
+#msg .more{display:none;position:sticky;float:right;bottom:0;animation:blink .8s steps(2) infinite}
+#msg.done .more{display:block}
+@keyframes blink{0%{opacity:1}100%{opacity:0}}
+#choices{flex:none;display:grid;gap:6px}
+#choices:empty{display:none}
+.ch{background:#000;border:2px solid #fcfcfc;border-radius:6px;padding:8px 4px;min-height:44px;font-size:16px}
+.ch.sel{background:#fcfcfc;color:#000}
+#pad{flex:none;height:164px;display:flex;align-items:center;justify-content:space-between;padding:0 18px}
+#dpad{position:relative;width:144px;height:144px;touch-action:none;border-radius:50%;background:#1c1c3c}
+#dpad i{position:absolute;width:48px;height:48px;display:flex;align-items:center;justify-content:center;background:#7c7c7c;color:#000;font-style:normal;font-size:18px;pointer-events:none}
+#dpad .u{left:48px;top:0;border-radius:8px 8px 0 0}#dpad .d{left:48px;top:96px;border-radius:0 0 8px 8px}
+#dpad .l{left:0;top:48px;border-radius:8px 0 0 8px}#dpad .r{left:96px;top:48px;border-radius:0 8px 8px 0}
+#dpad::after{content:"";position:absolute;left:48px;top:48px;width:48px;height:48px;background:#7c7c7c;pointer-events:none}
+#ab{display:flex;gap:14px;align-items:flex-end}
+#ab button{width:64px;height:64px;border-radius:50%;border:3px solid #fcfcfc;background:#d82800;font-size:22px;touch-action:none}
+#bB{margin-top:36px;background:#0078f8 !important}#bA{margin-bottom:36px}
+#keys{display:none;flex:none;grid-template-columns:repeat(4,1fr);gap:5px;padding:4px 6px 8px}
+#keys.on{display:grid}
+.k{height:42px;border:2px solid #bcbcbc;border-radius:6px;background:#1c1c3c;font-size:20px;touch-action:none;display:flex;align-items:center;justify-content:center}
+.k:active{background:#fcfcfc;color:#000}
+.k.x{background:#44009c;border-color:#9878f8}.k.f{font-size:13px;background:#000}
+.k.ok{grid-column:span 2;background:#d82800;border-color:#fcfcfc;font-size:17px}
+.k .mf{font-size:11px;line-height:1}
+/* 数式(ノートに書く形) */
+.mf{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;margin:0 .15em;line-height:1.2}
+.mn{border-bottom:2px solid currentColor;padding:0 .25em .05em}.md{padding:.05em .25em 0}
+.mr{display:inline-flex;align-items:stretch;vertical-align:middle;margin:0 .1em}
+.ms{width:.62em;height:auto;flex:none;fill:none;stroke:currentColor;stroke-width:2;vector-effect:non-scaling-stroke;overflow:visible}
+.ms path{vector-effect:non-scaling-stroke}
+.mb{border-top:2px solid currentColor;padding:.08em .15em 0 .1em;line-height:1.25}
+.mi{font-size:.6em;align-self:flex-start;margin-right:-.35em;line-height:1}
+sup{font-size:.68em;vertical-align:.65em;line-height:1}sub{font-size:.68em;vertical-align:-.35em;line-height:1}
+sup .mf,sub .mf{font-size:1.15em}
+sup:has(.mf){vertical-align:.9em}
+.q{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP","Meiryo",sans-serif}
+.qt{font-size:15px;line-height:1.9}.qe{font-size:22px;text-align:center;padding:6px 0;line-height:2}
+.qf{font-size:22px;text-align:center;padding:6px 0 2px;line-height:2.2}
+.qh{font-size:14px;color:#f8d820;line-height:2;border-top:1px dashed #7c7c7c;margin-top:4px}
+.qn{font-size:13px;color:#fc9838;min-height:1.2em;line-height:1.4}
+.blank{display:inline-block;min-width:1.8em;min-height:1.7em;border:2px dashed #bcbcbc;border-radius:4px;margin:0 .15em;padding:0 .2em;vertical-align:middle;text-align:center;line-height:1.6}
+.blank.act{border:2px solid #f8d820;background:#2a2a00}
+.blank .bp{min-width:1.3em;min-height:1.25em;display:block}
+.blank .bp.cur{background:#6a5a00}
+.blank.act:not(:has(.bp))::after,.bp.cur::after{content:"";display:inline-block;width:2px;height:1em;background:#f8d820;vertical-align:-.1em;animation:blink .8s steps(2) infinite}
+.ex{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP","Meiryo",sans-serif;font-size:15px}
+.exa{color:#f8d820;line-height:2.4}.exf{font-size:19px;margin-left:.4em}.exl{line-height:2.3;border-top:1px dashed #444}
+/* 全画面の画面 */
+#ov{display:none;position:absolute;inset:0;z-index:20;background:#0f0f1b;overflow-y:auto;padding:14px;user-select:text;-webkit-user-select:text}
+#ov.on{display:block}
+#ov button{background:#000;border:2px solid #fcfcfc;border-radius:6px;padding:8px 10px;min-height:44px;font-size:16px}
+#ov button.sel{background:#fcfcfc;color:#000}
+#ov .big{width:100%;margin-top:14px;background:#d82800;font-size:18px}#ov .big.sub{background:#000}
+#ov .row{display:flex;gap:8px}#ov .row>*{flex:1}
+#ov .lab{font-size:13px;color:#bcbcbc;margin:14px 0 6px}
+#ov .note{font-size:12px;color:#bcbcbc;line-height:1.6;font-weight:normal}
+#ov .err{color:#fc9838;font-size:13px;min-height:1.4em;margin-top:6px}
+#ov input,#ov textarea{width:100%;background:#000;border:2px solid #fcfcfc;border-radius:6px;padding:8px;font-size:20px}
+#ov #rnd{flex:none;min-height:44px}
+#ov canvas{image-rendering:pixelated}
+.ttl{text-align:center;padding-top:8vh}
+.ttl .t0{font-size:14px;letter-spacing:.4em;color:#f8d820}
+.ttl h1{font-size:26px;margin:10px 0;text-shadow:3px 3px 0 #0078f8}
+.ttl .t2{font-size:14px;color:#bcbcbc}
+.ttl .heroes{margin:26px 0;display:flex;justify-content:center;gap:4px}
+.vbtn{display:flex;flex-direction:column;gap:10px;margin:0 12% 18px}
+.crt h2,.card h2{font-size:20px;margin:4px 0;text-align:center;color:#f8d820}
+.jobs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.jobs button{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:14px !important;padding:6px 2px !important}
+.jobs button.sel canvas{background:#3cbcfc}
+.jdesc{font-size:13px;margin-top:10px;min-height:2.8em;line-height:1.5}
+.pw{font-size:22px;line-height:1.9;letter-spacing:.08em;border:3px solid #fcfcfc;border-radius:6px;padding:10px;background:#000;margin-top:10px;text-align:center}
+.card{border:4px double #f8d820;border-radius:10px;padding:12px;background:linear-gradient(#1c1c3c,#0f0f1b)}
+.chead{display:flex;gap:12px;align-items:center}
+.chead canvas{background:#3cbcfc;border:3px solid #fcfcfc;border-radius:6px;flex:none}
+.cname{font-size:26px}.cjob{font-size:16px;margin-top:4px}.ctitle{font-size:15px;color:#f8d820;margin-top:2px}.ctitle2{font-size:14px;color:#3cbcfc}
+.cstat{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:14px;margin-top:12px;border-top:2px solid #7c7c7c;padding-top:10px}
+.bosses{display:flex;flex-wrap:wrap;gap:6px}
+.bosses div{border:2px solid #7c7c7c;border-radius:6px;line-height:0;background:#000}
+.bosses .got{border-color:#f8d820;background:#44009c}.bosses .yet canvas{filter:brightness(0) invert(.25)}
+.tlist{display:flex;flex-wrap:wrap;gap:6px}.tlist button{font-size:13px !important;min-height:36px !important;padding:4px 8px !important}
+.cfoot{text-align:right;font-size:11px;color:#7c7c7c;margin-top:10px}
+.courses{padding:10vh 16px}.courses a{display:block;border:3px solid #fcfcfc;border-radius:8px;padding:14px;margin:12px 0;color:#fcfcfc;text-decoration:none;background:#000}
+.courses small{display:block;color:#bcbcbc;margin-top:4px;font-weight:normal}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="engine.js"></script>
+<script>
+/* コース一覧。コースを追加したら、ここに1行足す。 */
+var COURSES = [
+  { id: 'suu2-2gakki-kimatsu', title: '数学II 2学期期末', sub: '加法定理 〜 指数関数・対数関数' }
+];
+(function () {
+  var app = document.getElementById('app');
+  var id = new URLSearchParams(location.search).get('course');
+  if (!id || !/^[A-Za-z0-9_-]+$/.test(id)) {
+    app.innerHTML = '<div class="courses"><div class="ttl" style="padding-top:0"><div class="t0">すうがく RPG</div><h1>コースを えらぶ</h1></div>' +
+      COURSES.map(function (c) { return '<a href="?course=' + c.id + '">' + c.title + '<small>' + c.sub + '</small></a>'; }).join('') + '</div>';
+    return;
+  }
+  var s = document.createElement('script');
+  s.src = 'courses/' + id + '.js';
+  s.onload = function () { MathRPG.start(id, app); };
+  s.onerror = function () { app.innerHTML = '<div class="courses">コース「' + id + '」が 見つかりません。<a href="./">コース一覧へ</a></div>'; };
+  document.body.appendChild(s);
+})();
+</script>
+</body>
+</html>
