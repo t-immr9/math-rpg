@@ -193,13 +193,15 @@ function nodesHTML(nodes, ctx) {
       case 'sup': return '<sup>' + nodesHTML(n.c, ctx) + '</sup>';
       case 'sub': return '<sub>' + nodesHTML(n.c, ctx) + '</sub>';
       case 'root': return '<span class="mr">' + (n.idx ? '<span class="mi">' + escM(n.idx) + '</span>' : '') + ROOT_SVG + '<span class="mb">' + nodesHTML(n.c, ctx) + '</span></span>';
-      case 'blank': return '<span class="blank" data-i="' + (ctx.n++) + '"></span>';
+      case 'blank': return ctx.blanks ? '<span class="blank" data-i="' + (ctx.n++) + '"></span>' : '□';
       case 'br': return '<br>';
     }
     return '';
   }).join('');
 }
-function mathHTML(src) { return nodesHTML(parseMarkup(src), { n: 0 }); }
+/* withBlanks = true のときだけ □ を「入力できる空欄」にする(答えの形 form 専用)。
+   それ以外の文(問題文・ヒント・解説)に □ があっても、ただの文字として出す。 */
+function mathHTML(src, withBlanks) { return nodesHTML(parseMarkup(src), { n: 0, blanks: withBlanks === true }); }
 function countBlanks(src) { return (String(src).match(/□/g) || []).length; }
 /* 答えの文字列 → マークアップ("-√3/2" → "-{√3/2}") */
 function answerMarkup(raw) {
@@ -274,10 +276,22 @@ function tryGenFloor(seed, W, H) {
   if (d2[exit.y][exit.x] < 0 || chests.some(function (c) { return d2[c.y][c.x] < 0; })) return null;
   return { w: W, h: H, grid: g, start: start, exit: exit, chests: chests, steps: d2[exit.y][exit.x] };
 }
+/* どうしても作れなかったときの「安全な階」(大きな部屋が1つ) */
+function safeFloor(W, H) {
+  const g = [];
+  for (let y = 0; y < H; y++) { g.push([]); for (let x = 0; x < W; x++) g[y].push(x >= 3 && x <= W - 4 && y >= 3 && y <= H - 4 ? T.FLOOR : T.WALL); }
+  const start = { x: 4, y: H >> 1 }, exit = { x: W - 5, y: H >> 1 }, chest = { x: W >> 1, y: 4 };
+  g[start.y][start.x] = T.BACK; g[exit.y][exit.x] = T.NEXT; g[chest.y][chest.x] = T.CHEST;
+  return { w: W, h: H, grid: g, start: start, exit: exit, chests: [chest], steps: exit.x - start.x, safe: true };
+}
+/* 作り直しは最大 tries 回(既定 60)。それでもだめなら 安全な階を返す(止まらない・例外を出さない)。 */
 function genFloor(seed, opt) {
   opt = opt || {};
-  for (let k = 0; k < 60; k++) { const f = tryGenFloor((seed + k * 7919) >>> 0, opt.w || 27, opt.h || 21); if (f) return f; }
-  throw new Error('ダンジョンを作れませんでした seed=' + seed);
+  const W = opt.w || 27, H = opt.h || 21, tries = opt.tries === undefined ? 60 : opt.tries;
+  for (let k = 0; k < tries; k++) {
+    try { const f = tryGenFloor((seed + k * 7919) >>> 0, W, H); if (f) return f; } catch (e) { /* 次の種で作り直す */ }
+  }
+  return safeFloor(W, H);
 }
 function floorSeed(entrySeed, floor) { return (Math.imul(entrySeed | 0, 31) + floor * 1013904223 + 12345) >>> 0; }
 /* ボス部屋(毎回同じ形)。H=隠し通路 B=ボス O=帰りの魔法陣 S=もどる階段 */
@@ -338,8 +352,10 @@ function findPath(w, h, solid, from, to, avoid) {
       if (m < bm || (m === bm && r.dist[c] < bd)) { bm = m; bd = r.dist[c]; goal = c; }
     }
   }
-  const path = [];
-  for (let c = goal; c !== from.y * w + from.x; c = r.prev[c]) path.unshift({ x: c % w, y: Math.floor(c / w) });
+  const path = [], s0 = from.y * w + from.x;
+  let c = goal, guard = w * h;                       // たどる回数に上限(万一 道がつながっていなくても 止まらない)
+  for (; c !== s0 && c >= 0 && guard > 0; c = r.prev[c], guard--) path.unshift({ x: c % w, y: Math.floor(c / w) });
+  if (c !== s0) return { path: [], goal: { x: from.x, y: from.y }, adjacent: false };
   const gx = goal % w, gy = Math.floor(goal / w);
   return { path: path, goal: { x: gx, y: gy }, adjacent: Math.abs(gx - tx) + Math.abs(gy - ty) === 1 };
 }
@@ -380,7 +396,33 @@ function buildQuestion(course, ref, R) {
   q.type = id;
   q.text = q.text || 'つぎの値を求めよ。';
   q.keys = q.keys || []; q.mistakes = q.mistakes || []; q.explain = q.explain || [];
+  q.hint = q.hint || '使う公式を 思い出そう';
   return q;
+}
+/* 問題が 画面に出せる形か調べる。だめなら理由の文字列、よければ null */
+function checkQuestion(q) {
+  if (!q || typeof q.form !== 'string') return 'form がない';
+  const n = countBlanks(q.form);
+  if (n < 1 || !Array.isArray(q.answers) || q.answers.length !== n) return '空欄の数と 答えの数が 合わない';
+  if (!q.answers.every(function (a) { return parseValue(a); })) return '答えの書き方が 正しくない';
+  if (countBlanks(q.text) || countBlanks(q.expr || '') || countBlanks(q.hint)) return '問題文・式・ヒントに □ がある(□ は form だけ)';
+  try {
+    mathHTML(q.text); if (q.expr !== undefined) mathHTML(q.expr); mathHTML(q.form, true); mathHTML(q.hint); mathHTML(fillForm(q.form, q.answers));
+    q.explain.forEach(function (l) { mathHTML(l); });
+    q.mistakes.forEach(function (m) { mathHTML(m.msg); if (!Array.isArray(m.answers) || m.answers.length !== n) throw new Error('誤答の answers'); });
+  } catch (e) { return e.message; }
+  return null;
+}
+/* 戦闘用: 問題を安全に作る。first の型で 最大 4 回、だめなら 同じ敵のほかの型で 作り直す。
+   全部だめなら null(戦闘は 敵が立ち去って 終わる)。例外は外に出さない。 */
+function safeQuestion(course, refs, first, seedFn) {
+  const order = [first].concat((refs || []).filter(function (r) { return r !== first; }));
+  for (let i = 0; i < order.length; i++) {
+    for (let k = 0; k < 4; k++) {
+      try { const q = buildQuestion(course, order[i], makeRng(seedFn())); if (!checkQuestion(q)) return q; } catch (e) { /* 作り直す */ }
+    }
+  }
+  return null;
 }
 function bossIds(course) { return Object.keys(course.enemies).filter(function (id) { return course.enemies[id].boss; }); }
 
@@ -506,7 +548,8 @@ const NPC = { mirror: true, rows: ['........', '.....hhh', '....hhhh', '....hsss
 
 M.util = { makeRng: makeRng, gcd: gcd, parseValue: parseValue, judge: judge, mistakes: cleanMistakes, fracStr: fracStr, piStr: piStr,
   parseMarkup: parseMarkup, mathHTML: mathHTML, countBlanks: countBlanks, am: answerMarkup, answerMarkup: answerMarkup, fillForm: fillForm };
-M.dungeon = { T: T, isSolid: isSolid, bfs: bfs, genFloor: genFloor, floorSeed: floorSeed, bossRoom: bossRoom };
+M.dungeon = { T: T, isSolid: isSolid, bfs: bfs, genFloor: genFloor, safeFloor: safeFloor, floorSeed: floorSeed, bossRoom: bossRoom };
+M.checkQuestion = checkQuestion; M.safeQuestion = safeQuestion;
 M.path = { find: findPath }; M.MOVE_MS = MOVE_MS;
 M.rules = rules; M.JOBS = JOBS; M.buildQuestion = buildQuestion; M.bossIds = bossIds;
 M.password = { encode: pwEncode, decode: pwDecode, alphabet: PW };
@@ -836,8 +879,21 @@ M.start = function (courseId, mount) {
   function run(fn) {
     route = null;
     if (busy) return; busy = true;
-    Promise.resolve().then(fn).catch(function (e) { console.error(e); }).then(function () { busy = false; if (input.dir) input.lock = true; hud(); });
+    Promise.resolve().then(fn).catch(function (e) { console.error(e); recover(false); }).then(function () { busy = false; if (input.dir) input.lock = true; hud(); });
   }
+  /* 思わぬエラーのあと、操作できる状態(マップ)へ もどす。toTown なら 町へ(ゴールドなどは減らさない)。 */
+  function recover(toTown) {
+    try {
+      modal = null; route = null; bt = null;
+      chEl.innerHTML = ''; chEl.onclick = null; msgEl.onclick = null; keysEl.className = ''; keysEl.onpointerdown = null; padEl.style.display = '';
+      $('cutin').className = ''; $('banner').className = ''; $('fx').className = '';
+      if (!S) return;
+      if (toTown) { S.dun = null; S.pos = Object.assign({}, course.start); S.combo = 0; }
+      mode = 'map'; setStage('map'); loadMap(); playBgmFor(); hud(); save();
+      showMsg('<div class="mt">' + (toTown ? '町へ もどった。' : 'うまく 動かなかったので、マップに もどりました。(記録は そのままです)') + '</div>');
+    } catch (e) { console.error(e); }
+  }
+  window.addEventListener('error', function () { if (S && (busy || mode === 'battle') && ovEl.className !== 'on') { busy = false; recover(false); } });
 
   /* ---------- マップ ---------- */
   function staticMap(id) {
@@ -865,8 +921,24 @@ M.start = function (courseId, mount) {
       } };
   }
   function loadMap() {
-    if (S.dun) { cur = dungeonMap(); P.x = S.dun.x; P.y = S.dun.y; }
-    else { if (!S.pos || !course.maps[S.pos.map]) S.pos = Object.assign({}, course.start); cur = staticMap(S.pos.map); P.x = S.pos.x; P.y = S.pos.y; }
+    if (S.dun) {
+      /* ダンジョン内での再開。データや階が おかしいときは 入口の階段か 町へ もどし、同じ場所で 止まり続けないようにする */
+      try {
+        const d = course.dungeons[S.dun.id]; if (!d) throw new Error('ダンジョンがない: ' + S.dun.id);
+        S.dun.floor = Math.max(0, Math.min(d.floors.length, S.dun.floor | 0)); S.dun.opened = S.dun.opened || {}; S.dun.seed = S.dun.seed | 0;
+        cur = dungeonMap();
+        const f = cur.floor, c = cur.cell(S.dun.x, S.dun.y);
+        if (!c || c.solid || bfs(f.grid, { x: S.dun.x, y: S.dun.y })[f.start.y][f.start.x] < 0) { S.dun.x = f.start.x; S.dun.y = f.start.y; }
+        P.x = S.dun.x; P.y = S.dun.y;
+      } catch (e) { console.error(e); S.dun = null; S.pos = Object.assign({}, course.start); }
+    }
+    if (!S.dun) {
+      if (!S.pos || !course.maps[S.pos.map]) S.pos = Object.assign({}, course.start);
+      cur = staticMap(S.pos.map);
+      const c = cur.cell(S.pos.x, S.pos.y);
+      if (!c || c.solid) { S.pos = Object.assign({}, course.start); cur = staticMap(S.pos.map); }
+      P.x = S.pos.x; P.y = S.pos.y;
+    }
     P.moving = false; P.px = P.x * 16; P.py = P.y * 16; route = null;
     stepsLeft = 4 + Math.floor(Math.random() * 6);
     if (mode === 'map') playBgmFor();
@@ -1064,13 +1136,18 @@ M.start = function (courseId, mount) {
   }
   async function openMenu() {
     for (;;) {
-      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '十字キー:' + (S.dpad ? 'オン' : 'オフ'), '記録のことば', 'とじる'],
-        { cols: 2, prompt: 'メニュー\n(歩く:マップをタップ。十字キーを出すこともできる)' });
+      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '十字キー:' + (S.dpad ? 'オン' : 'オフ'), '記録のことば', '町へ もどる', 'とじる'],
+        { cols: 2, prompt: 'メニュー(歩く:マップをタップ)' });
       if (c === 0) await statusScreen();
       else if (c === 1) { if (await itemMenu(false) === 'bell') break; }
       else if (c === 2) setSound(!soundOn);
       else if (c === 3) { setPad(!S.dpad); save(); }
       else if (c === 4) await passwordShow();
+      else if (c === 5) {
+        if (await choose(['町へ もどる', 'やめる'], { cols: 2, prompt: '町へ もどりますか?\n(ゴールドや道具は へりません。ダンジョンは 入り直しに なります)' }) === 0) {
+          S.dun = null; S.pos = Object.assign({}, course.start); loadMap(); save(); sfx('stairs'); await say('町へ もどった。'); break;
+        }
+      }
       else break;
     }
     showMsg('');
@@ -1110,7 +1187,7 @@ M.start = function (courseId, mount) {
   }
   function qHTML(q, withForm) {
     return '<div class="q"><div class="qt">' + mathHTML(q.text) + '</div>' + (q.expr ? '<div class="qe">' + mathHTML(q.expr) + '</div>' : '') +
-      (withForm ? '<div class="qf">' + mathHTML(q.form) + '</div>' : '') + (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '<div class="qn"></div></div>';
+      (withForm ? '<div class="qf">' + mathHTML(q.form, true) + '</div>' : '') + (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '<div class="qn"></div></div>';
   }
   const KEYLABEL = { '-': '−', '⌫': '⌫', '分数': '<span class="mf"><span class="mn">□</span><span class="md">□</span></span>', '+': '＋', '<': '＜', '>': '＞', hint: '💡ヒント', back: 'もどる' };
   function partHTML(s) {
@@ -1132,8 +1209,9 @@ M.start = function (courseId, mount) {
       function render() {
         showMsg(qHTML(q, true));
         msgEl.querySelector('.qn').textContent = note;
-        Array.from(msgEl.querySelectorAll('.blank')).forEach(function (el, i) {
+        Array.from(msgEl.querySelectorAll('.qf .blank')).forEach(function (el, i) {      // 空欄は「答えの形」の中だけ
           const c = cells[i], on = i === act;
+          if (!c) return;
           el.className = 'blank' + (on ? ' act' : '');
           if (c.den !== null) {
             const neg = c.num[0] === '-';
@@ -1230,7 +1308,8 @@ M.start = function (courseId, mount) {
     let result = null;
     while (!result) {
       bt.turn++;
-      const q = buildQuestion(course, pickType(bt), makeRng(Math.floor(Math.random() * 4294967296)));
+      const q = safeQuestion(course, bt.phase === 2 && E.phase2 ? E.phase2.types : E.types, pickType(bt), function () { return Math.floor(Math.random() * 4294967296); });
+      if (!q) { await say(bt.name + 'は ふしぎな けむりに つつまれて、どこかへ 消えてしまった……。'); result = 'flee'; break; }
       bt.lastType = q.type;
       if (job().jest && Math.random() < 0.18) await say(JEST[Math.floor(Math.random() * JEST.length)].replace('{n}', S.name));
       let acted = false;
@@ -1502,6 +1581,26 @@ M.start = function (courseId, mount) {
         wrongMode = 1; S.lv = 3; S.hp = maxHp(); S.gold = 100; S.dun = { id: 'tower', floor: 1, seed: 5, opened: {}, ret: course.start, x: 3, y: 3 };
         log.push('harmo Lv3 全問不正解 → ' + await battle('harmo') + ' / gold=' + S.gold + ' hp=' + S.hp + ' dun=' + S.dun + ' pos=' + JSON.stringify(S.pos) + ' mistakes=' + JSON.stringify(S.stats.mistakes));
         wrongMode = 2; for (const e of Object.keys(course.enemies)) { if (course.enemies[e].boss) continue; S.lv = course.enemies[e].level + 2; S.hp = maxHp(); log.push(e + ' → ' + await battle(e)); }
+        /* 本物の入力画面で、全部の型の正解を キーで打って 決定する(入力画面が止まらないかの確認) */
+        const auto0 = autoAnswer; autoAnswer = null; let uiOk = 0; const uiNg = [];
+        for (const tid of Object.keys(course.types)) {
+          for (let sd = 1; sd <= 12; sd++) {
+            try {
+              const q = buildQuestion(course, tid, makeRng(sd * 977 + 5)), pr = askAnswer(q, { hints: 1 });
+              q.answers.forEach(function (raw, bi) {
+                if (bi) modal.key({ key: 'Tab' });
+                Array.from(raw).forEach(function (chr) { modal.key({ key: chr === '√' ? 'r' : chr === 'π' ? 'p' : chr }); });
+              });
+              modal.key({ key: 'h' }); modal.key({ key: 'Enter' });
+              const r = await Promise.race([pr, wait(200).then(function () { return null; })]);
+              if (r && r.judge.result === 'correct') uiOk++; else { uiNg.push(tid + '#' + sd); if (modal && modal.key) modal.key({ key: 'Escape' }); }
+            } catch (e) { uiNg.push(tid + '#' + sd + '(' + e.message + ')'); recover(false); mode = 'map'; }
+          }
+        }
+        autoAnswer = auto0;
+        log.push('入力画面で 全型の正解を キー入力 → 正解 ' + uiOk + ' 問 / 失敗 ' + (uiNg.length ? uiNg.join(', ') : 'なし'));
+        S.dun = { id: 'nai', floor: 9, seed: 1, opened: null, x: -5, y: 99 }; loadMap(); log.push('こわれた再開データ(ない ダンジョン)→ dun=' + S.dun + ' map=' + S.pos.map);
+        S.dun = { id: 'cave', floor: 0, seed: 77, opened: {}, x: 0, y: 0, ret: course.start }; loadMap(); log.push('こわれた再開データ(壁の中)→ 階段へ ' + P.x + ',' + P.y + ' = ' + JSON.stringify(cur.floor.start)); S.dun = null; loadMap();
         wrongMode = 0; await enterDungeon('cave', course.start); log.push('cave に入る → floor=' + (S.dun && S.dun.floor) + ' 位置=' + P.x + ',' + P.y);
         await gotoFloor(1, 'start'); await gotoFloor(2, 'start'); log.push('ボス部屋 isBoss=' + cur.isBoss + ' 隠し通路=' + cur.cell(6, 1).k);
         await openChest(); await inn(); await church(); log.push('宿屋・教会 OK hp=' + S.hp);

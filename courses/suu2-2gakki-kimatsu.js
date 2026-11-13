@@ -30,6 +30,12 @@ function scale(k, s) {
 function p12(u) { return U.piStr(u, 12); }                         // π/12 を単位にした角
 function thetaPlus(a12) { return a12 >= 0 ? 'θ + ' + am(p12(a12)) : 'θ - ' + am(p12(-a12)); }
 function par(n, d) { const s = F(n, d); return s[0] === '-' ? '(' + am(s) + ')' : am(s); }
+/* 条件に合う数値が出るまで 引き直す。回数に上限があり、上限に達したら fallback(必ず条件に合う安全な値)を使う。
+   問題の生成で「終わらないループ」を作らないため、do…while の代わりに これを使う。 */
+function pickUntil(make, ok, fallback) {
+  for (let i = 0; i < 200; i++) { const v = make(); if (ok(v)) return v; }
+  return fallback;
+}
 function close(a, b) { return Math.abs(a - b) < 1e-7 * Math.max(1, Math.abs(a), Math.abs(b)); }
 
 /* 有名角の表 [sin, cos, tan] */
@@ -59,7 +65,8 @@ types['trig-value'] = {
   name: '有名角の sin・cos・tan', level: 0,
   gen: function (R, opt) {
     let deg = R.pick(DEGS), f = opt.f ? ['sin', 'cos', 'tan'].indexOf(opt.f) : R.int(0, 2);
-    while (TRIG[deg][f] === null) deg = R.pick(DEGS);
+    for (let i = 0; i < 50 && TRIG[deg][f] === null; i++) deg = R.pick(DEGS);
+    if (TRIG[deg][f] === null) deg = 45;
     const name = ['sin', 'cos', 'tan'][f], ans = TRIG[deg][f], mis = [];
     if (f < 2) mis.push({ answers: [TRIG[deg][1 - f]], tag: 'sincos-swap', msg: 'sin は y 座標、cos は x 座標。逆になっていないかな?' });
     else {
@@ -109,7 +116,7 @@ types['pow-basic'] = {
   gen: function (R, opt) {
     const a = R.pick([2, 3, 4, 5, 10]);
     let n = opt.zero ? R.int(0, 1) : R.int(0, 6);
-    while (pw(a, n) > 256 && a !== 10 || pw(a, n) > 1000) n--;
+    while (n > 0 && (pw(a, n) > 256 && a !== 10 || pw(a, n) > 1000)) n--;
     const ans = String(pw(a, n));
     const ex = n === 0 ? ['0 でない数の 0 乗は 1 と決める', a + '^0 = 1']
       : n === 1 ? ['1 乗は その数自身', a + '^1 = ' + a]
@@ -141,7 +148,7 @@ types['log-basic'] = {
   gen: function (R) {
     const a = R.pick([2, 3, 5, 10]);
     let k = R.int(-2, 4);
-    while (pw(a, Math.abs(k)) > 1000 || (a === 5 && Math.abs(k) > 3)) k += k > 0 ? -1 : 1;
+    while (k !== 0 && (pw(a, Math.abs(k)) > 1000 || (a === 5 && Math.abs(k) > 3))) k += k > 0 ? -1 : 1;
     const big = pw(a, Math.abs(k)), arg = k < 0 ? '{1/' + big + '}' : String(big), ans = String(k), mis = [];
     if (k > 1 && big % a === 0) mis.push({ answers: [String(big / a)], tag: 'log-div', msg: 'log は割り算ではないよ。「' + a + ' を何乗すると ' + big + ' か」を考えよう' });
     if (k < 0) mis.push({ answers: [String(-k)], tag: 'log-neg', msg: '真数が分数(1 より小さい)のとき、log は負になるよ' });
@@ -173,7 +180,7 @@ types['add-formula'] = {
       ex = ['tan(α ± β) = {tan α ± tan β/1 ∓ tan α tan β}(複号同順)', '分子は左辺と同じ符号、分母は逆の符号'];
     }
     return {
-      text: '□ に入る符号(＋ か −)を答えよ。', form: form, answers: [ans], keys: ['+'],
+      text: '空欄に入る符号(＋ か −)を答えよ。', form: form, answers: [ans], keys: ['+'],
       hint: 'sin は「そのまま」、cos は「逆」、tan は「分子そのまま・分母は逆」',
       explain: ex, mistakes: [{ answers: [flip(ans)], tag: tag, msg: msg }]
     };
@@ -327,7 +334,7 @@ types['exp-neg'] = {
     }
     let n = R.int(1, 3);
     if (kind <= 4) {
-      while (pw(a, n) > 1000) n--;
+      while (n > 1 && pw(a, n) > 1000) n--;
       const big = pw(a, n), ans = F(1, big);
       return {
         text: 'つぎの値を求めよ。', expr: a + '^{-' + n + '}', form: '□', answers: [ans], keys: ['分数'], num: [Math.pow(a, -n)],
@@ -339,7 +346,7 @@ types['exp-neg'] = {
           { answers: [String(-a * n)], tag: 'pow-mult', msg: '指数は かけ算ではないよ。' + a + '^{-' + n + '} = {1/' + a + '^' + n + '}' }])
       };
     }
-    while (pw(a, n) > 125) n--;
+    while (n > 1 && pw(a, n) > 125) n--;
     const big = pw(a, n);
     return {
       text: 'つぎの値を求めよ。', expr: '({1/' + a + '})^{-' + n + '}', form: '□', answers: [String(big)], keys: ['分数'], num: [Math.pow(1 / a, -n)],
@@ -369,9 +376,9 @@ types['root'] = {
 types['exp-rational'] = {
   name: '有理数の指数', level: 2,
   gen: function (R) {
-    let p, n, m;
-    do { p = R.pick([2, 3, 5]); n = R.int(2, 4); m = R.pick([1, 2, 3, -1, -2, -3]); }
-    while (U.gcd(m, n) !== 1 || pw(p, n) > 125 || pw(p, Math.abs(m)) > 125);
+    const v0 = pickUntil(function () { return [R.pick([2, 3, 5]), R.int(2, 4), R.pick([1, 2, 3, -1, -2, -3])]; },
+      function (v) { return U.gcd(v[2], v[1]) === 1 && pw(v[0], v[1]) <= 125 && pw(v[0], Math.abs(v[2])) <= 125; }, [2, 3, 2]);
+    const p = v0[0], n = v0[1], m = v0[2];
     const base = pw(p, n), am_ = Math.abs(m), val = pw(p, am_), ans = m > 0 ? String(val) : F(1, val);
     const ex = m > 0 ? '{' + m + '/' + n + '}' : '-{' + am_ + '/' + n + '}';
     const mis = [{ answers: [F(base * m, n)], tag: 'pow-mult', msg: '指数は かけ算ではないよ。まず ' + base + ' = ' + p + '^' + n + ' と表そう' }];
@@ -391,9 +398,9 @@ types['exp-rational'] = {
 types['exp-eq'] = {
   name: '指数方程式', level: 3,
   gen: function (R) {
-    let p, i, j;
-    do { p = R.pick([2, 3]); i = R.int(1, 3); j = R.int(-3, 5); }
-    while (j === 0 || (i === 1 && j === 1) || i === j || pw(p, i) > 27 || pw(p, Math.abs(j)) > 243);
+    const v0 = pickUntil(function () { return [R.pick([2, 3]), R.int(1, 3), R.int(-3, 5)]; },
+      function (v) { return v[2] !== 0 && v[1] !== v[2] && pw(v[0], v[1]) <= 27 && pw(v[0], Math.abs(v[2])) <= 243; }, [2, 2, 3]);
+    const p = v0[0], i = v0[1], j = v0[2];
     const A = pw(p, i), big = pw(p, Math.abs(j)), rhs = j < 0 ? '{1/' + big + '}' : String(big), ans = F(j, i), mis = [];
     if (j > 0 && big % A === 0) mis.push({ answers: [String(big / A)], tag: 'exp-eq-div', msg: '割り算ではなく、底を ' + p + ' にそろえて 指数を比べよう' });
     mis.push({ answers: [F(i, j)], tag: 'exp-eq-swap', msg: '底をそろえると ' + p + '^{' + (i === 1 ? '' : i) + 'x} = ' + p + '^{' + j + '}。指数どうしを比べよう' });
@@ -422,9 +429,9 @@ types['log-value'] = {
         mistakes: [{ answers: [String(n)], tag: 'root-exp', msg: arg + ' = ' + p + '^{1/' + n + '}。指数は 分数になるよ' }]
       };
     }
-    let p, i, j;
-    do { p = R.pick([2, 3, 5]); i = R.int(1, 3); j = R.int(-3, 4); }
-    while ((i === 1 && j === 1) || (j === 0 && R.chance(0.8)) || pw(p, i) > 27 || pw(p, Math.abs(j)) > (p === 5 ? 25 : 81));
+    const v0 = pickUntil(function () { return [R.pick([2, 3, 5]), R.int(1, 3), R.int(-3, 4)]; },
+      function (v) { return !(v[1] === 1 && v[2] === 1) && !(v[2] === 0 && R.chance(0.8)) && pw(v[0], v[1]) <= 27 && pw(v[0], Math.abs(v[2])) <= (v[0] === 5 ? 25 : 81); }, [2, 2, 3]);
+    const p = v0[0], i = v0[1], j = v0[2];
     const A = pw(p, i), big = pw(p, Math.abs(j)), arg = j < 0 ? '{1/' + big + '}' : String(big), ans = F(j, i), mis = [];
     if (j > 0 && big % A === 0) mis.push({ answers: [String(big / A)], tag: 'log-div', msg: 'log は割り算ではないよ。「' + A + ' を何乗すると ' + big + ' か」を考えよう' });
     if (j !== 0) mis.push({ answers: [F(i, j)], tag: 'log-swap', msg: 'log_a b = x は a^x = b。底と真数を 逆にしていないかな?' });
@@ -444,27 +451,27 @@ types['log-prop-form'] = {
   gen: function (R) {
     const a = R.pick([2, 3, 5, 7, 10]), kind = R.int(0, 2), lg = 'log_{' + a + '} ';
     if (kind === 0) {
-      let m, n; do { m = R.int(2, 9); n = R.int(2, 9); } while (m + n === m * n);
+      const mn = pickUntil(function () { return [R.int(2, 9), R.int(2, 9)]; }, function (v) { return v[0] + v[1] !== v[0] * v[1]; }, [3, 5]), m = mn[0], n = mn[1];
       return {
-        text: '□ に入る数を答えよ。', form: lg + m + ' + ' + lg + n + ' = ' + lg + '□', answers: [String(m * n)], num: [Math.exp(Math.log(m) + Math.log(n))],
+        text: '空欄に入る数を答えよ。', form: lg + m + ' + ' + lg + n + ' = ' + lg + '□', answers: [String(m * n)], num: [Math.exp(Math.log(m) + Math.log(n))],
         hint: 'log M + log N = log MN(足し算は 真数のかけ算)',
         explain: ['log_a M + log_a N = log_a MN', lg + m + ' + ' + lg + n + ' = ' + lg + '(' + m + '×' + n + ')', '= ' + lg + (m * n)],
         mistakes: [{ answers: [String(m + n)], tag: 'log-add', msg: '足し算になるのは log(ab) のときだよ(log M + log N = log MN)' }]
       };
     }
     if (kind === 1) {
-      let n, qv; do { n = R.int(2, 6); qv = R.int(2, 9); } while (n * qv - n === qv);
+      const nq = pickUntil(function () { return [R.int(2, 6), R.int(2, 9)]; }, function (v) { return v[0] * v[1] - v[0] !== v[1]; }, [2, 5]), n = nq[0], qv = nq[1];
       const m = n * qv;
       return {
-        text: '□ に入る数を答えよ。', form: lg + m + ' - ' + lg + n + ' = ' + lg + '□', answers: [String(qv)], num: [Math.exp(Math.log(m) - Math.log(n))],
+        text: '空欄に入る数を答えよ。', form: lg + m + ' - ' + lg + n + ' = ' + lg + '□', answers: [String(qv)], num: [Math.exp(Math.log(m) - Math.log(n))],
         hint: 'log M - log N = log {M/N}(引き算は 真数の割り算)',
         explain: ['log_a M - log_a N = log_a {M/N}', lg + m + ' - ' + lg + n + ' = ' + lg + '{' + m + '/' + n + '}', '= ' + lg + qv],
         mistakes: [{ answers: [String(m - n)], tag: 'log-sub', msg: '引き算は 真数の割り算になるよ(log M - log N = log {M/N})' }]
       };
     }
-    let k, m; do { k = R.int(2, 3); m = R.int(2, 6); } while (k * m === pw(m, k));
+    const km = pickUntil(function () { return [R.int(2, 3), R.int(2, 6)]; }, function (v) { return v[0] * v[1] !== pw(v[1], v[0]); }, [2, 3]), k = km[0], m = km[1];
     return {
-      text: '□ に入る数を答えよ。', form: k + ' ' + lg + m + ' = ' + lg + '□', answers: [String(pw(m, k))], num: [Math.exp(k * Math.log(m))],
+      text: '空欄に入る数を答えよ。', form: k + ' ' + lg + m + ' = ' + lg + '□', answers: [String(pw(m, k))], num: [Math.exp(k * Math.log(m))],
       hint: 'k log M = log M^k(係数は 真数の指数へ)',
       explain: ['k log_a M = log_a M^k', k + ' ' + lg + m + ' = ' + lg + m + '^' + k, '= ' + lg + pw(m, k)],
       mistakes: [{ answers: [String(k * m)], tag: 'log-coef', msg: '係数は 真数の指数になるよ(k log M = log M^k)' }]
@@ -585,8 +592,9 @@ types['maou-gousei-range'] = {
 types['maou-exp-ineq'] = {
   name: '指数不等式', level: 4,
   gen: function (R) {
-    let p, kind, j;
-    do { p = R.pick([2, 3]); kind = R.pick(['p', 'p2', 'inv']); j = R.int(-3, 4); } while (j === 0 || pw(p, Math.abs(j)) > 81 || (kind === 'p2' && j % 2 === 0));
+    const v0 = pickUntil(function () { return [R.pick([2, 3]), R.pick(['p', 'p2', 'inv']), R.int(-3, 4)]; },
+      function (v) { return v[2] !== 0 && pw(v[0], Math.abs(v[2])) <= 81 && !(v[1] === 'p2' && v[2] % 2 === 0); }, [2, 'p', 3]);
+    const p = v0[0], kind = v0[1], j = v0[2];
     const s = R.pick(['<', '>']), e = kind === 'p' ? 1 : kind === 'p2' ? 2 : -1, A = kind === 'inv' ? 1 / p : pw(p, e);
     const base = kind === 'inv' ? '({1/' + p + '})^x' : A + '^x', big = pw(p, Math.abs(j)), rhs = j < 0 ? '{1/' + big + '}' : String(big), rn = j < 0 ? 1 / big : big;
     const sa = e < 0 ? flip(s) : s, val = F(j, e), ans = [sa, val], mis = [];
@@ -711,7 +719,7 @@ types['shin-exp-sub'] = {
         mistakes: U.mistakes(ans, [{ answers: [String(r1), String(r2)], tag: 'sub-back', msg: 'それは t の値。t = ' + px + ' に戻して x を求めよう' }], [[0, 1]])
       };
     }
-    let u, m; do { u = R.int(0, 3); m = R.int(1, 5); } while (pw(p, u) === m);
+    const um = pickUntil(function () { return [R.int(0, 3), R.int(1, 5)]; }, function (v) { return pw(p, v[0]) !== v[1]; }, [2, 1]), u = um[0], m = um[1];
     const r = pw(p, u), b = m - r, c = -m * r;
     return {
       text: 'つぎの方程式を解け。', expr: P + '^x' + term(b, px) + term(c) + ' = 0', form: 'x = □', answers: [String(u)], verify: ok(b, c),

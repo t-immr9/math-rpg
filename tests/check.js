@@ -1,6 +1,7 @@
 /* ============================================================
  * tests/check.js — 自動テスト     実行: node tests/check.js
- *   1. エンジンの判定・数式表示・記録のことば
+ *   0. 止まらないこと(別プロセスで 型ごとに 20000 問・階ごとに 2000 回。時間切れなら 場所を報告)
+ *   1. エンジンの判定・数式表示・記録のことば・こわれたデータへの そなえ
  *   2. すべての問題の型(各 400 問): 正解・表示・誤答データ
  *   3. ダンジョン生成(1200 回 × 3 階)と 隠し通路
  *   4. コースのデータ(マップ・敵・ドット絵・称号・強さのバランス)
@@ -12,6 +13,54 @@ const M = require('../engine.js');
 const dir = path.join(__dirname, '..', 'courses');
 fs.readdirSync(dir).filter(f => f.endsWith('.js')).forEach(f => require(path.join(dir, f)));
 const U = M.util, D = M.dungeon, R = M.rules;
+
+/* 「止まらないこと」の確認は 別プロセスで 最初に行う(終わらないループがあっても、時間切れで 打ち切って 場所を報告できる) */
+const { spawnSync } = require('child_process');
+const FUZZ_TYPES = 20000, FUZZ_FLOORS = 2000;       // 型ごとの問題数、階ごとの生成回数
+function runFuzz() {
+  const post = m => fs.appendFileSync(process.argv[3], JSON.stringify(m) + '\n'), now = () => Number(process.hrtime.bigint()) / 1e6;
+  const seeds = U.makeRng(20261114);
+  Object.keys(M.courses).forEach(function (cid) {
+    const C = M.courses[cid], refs = Object.keys(C.types);
+    Object.keys(C.enemies).forEach(id => { const E = C.enemies[id]; E.types.concat(E.phase2 ? E.phase2.types : []).forEach(r => { if (typeof r !== 'string') refs.push(r); }); });
+    refs.forEach(function (ref) {
+      const label = cid + ' 型 ' + (typeof ref === 'string' ? ref : ref.type + JSON.stringify(ref.opt));
+      post({ start: label });
+      let max = 0, total = 0, errs = 0, bad = 0, first = '';
+      for (let i = 0; i < FUZZ_TYPES; i++) {
+        const seed = Math.floor(seeds.next() * 4294967296), t0 = now(); let q = null;
+        try { q = M.buildQuestion(C, ref, U.makeRng(seed)); } catch (e) { errs++; first = first || 'seed ' + seed + ': ' + e.message; }
+        const dt = now() - t0; total += dt; if (dt > max) max = dt;
+        if (q) { const e = M.checkQuestion(q); if (e) { bad++; first = first || 'seed ' + seed + ': ' + e; } }
+      }
+      post({ done: label, kind: 'type', n: FUZZ_TYPES, max: max, avg: total / FUZZ_TYPES, errs: errs, bad: bad, first: first });
+    });
+    Object.keys(C.dungeons).forEach(function (did) {
+      const d = C.dungeons[did];
+      for (let fl = 0; fl < d.floors.length; fl++) {
+        const label = cid + ' ダンジョン ' + did + ' ' + (fl + 1) + '階';
+        post({ start: label });
+        let max = 0, total = 0, errs = 0, bad = 0, safe = 0, pmax = 0, first = '';
+        for (let i = 0; i < FUZZ_FLOORS; i++) {
+          const entry = Math.floor(seeds.next() * 2147483647), t0 = now(); let f = null;
+          try { f = D.genFloor(D.floorSeed(entry, fl)); } catch (e) { errs++; first = first || 'seed ' + entry + ': ' + e.message; }
+          const dt = now() - t0; total += dt; if (dt > max) max = dt;
+          if (!f) continue;
+          if (f.safe) safe++;
+          const dist = D.bfs(f.grid, f.start);
+          if (dist[f.exit.y][f.exit.x] <= 0 || f.chests.some(c => dist[c.y][c.x] <= 0)) { bad++; first = first || 'seed ' + entry + ': 階段か宝箱に 行けない'; }
+          const t1 = now(), solid = (x, y) => D.isSolid(f.grid[y][x]);
+          const r = M.path.find(f.w, f.h, solid, f.start, f.exit, (x, y) => f.grid[y][x] === D.T.NEXT), r2 = M.path.find(f.w, f.h, solid, f.start, { x: 0, y: 0 });
+          pmax = Math.max(pmax, now() - t1);
+          if (r.goal.x !== f.exit.x || r.goal.y !== f.exit.y || solid(r2.goal.x, r2.goal.y)) { bad++; first = first || 'seed ' + entry + ': 道探しが 階段に着かない'; }
+        }
+        post({ done: label, kind: 'floor', n: FUZZ_FLOORS, max: max, avg: total / FUZZ_FLOORS, errs: errs, bad: bad, safe: safe, pmax: pmax, first: first });
+      }
+    });
+  });
+  post({ end: true });
+}
+if (process.argv[2] === '--fuzz') { runFuzz(); return; }
 
 let fails = 0, checks = 0;
 const seen = {};
@@ -40,9 +89,9 @@ function htmlOk(html) {
   if (/undefined|NaN|null|\[object/.test(text)) return '表示に undefined / NaN などが まじっている: ' + text;
   return null;
 }
-function renderOk(label, src) {
+function renderOk(label, src, withBlanks) {
   if (typeof src !== 'string' || !src.length) return ok(false, label + ' が 空');
-  const html = tryDo(label + ' の表示「' + src + '」', () => U.mathHTML(src));
+  const html = tryDo(label + ' の表示「' + src + '」', () => U.mathHTML(src, withBlanks === true));
   if (html === undefined) return false;
   const e = htmlOk(html);
   return ok(!e, label + '「' + src + '」: ' + e);
@@ -57,6 +106,40 @@ function typeable(raw, keys) {
   if (raw.indexOf('π') >= 0 && keys.indexOf('π') < 0) return false;
   return raw.split('/').every(p => p.length >= 1 && p.length <= 6) && /^[-0-9√π/]+$/.test(raw);
 }
+
+/* ---------- 0. 止まらないこと・時間がかかりすぎないこと(最初に行う) ---------- */
+section('止まらないこと・時間がかかりすぎないこと(型ごとに ' + FUZZ_TYPES + ' 問、階ごとに ' + FUZZ_FLOORS + ' 回)');
+(function () {
+  const LIMIT = parseInt(process.env.MATHRPG_FUZZ_LIMIT || '120000', 10), SLOW_MS = 250, AVG_MS = 2;     // 全体で 120秒 かかったら 打ち切り。1回 250ms、平均 2ms を こえたら 失敗
+  const tmp = path.join(require('os').tmpdir(), 'mathrpg-fuzz-' + process.pid + '.jsonl');   // 結果は 一時ファイルで 受け取る
+  fs.writeFileSync(tmp, '');
+  const res = spawnSync(process.execPath, [__filename, '--fuzz', tmp], { stdio: 'ignore', timeout: LIMIT });
+  const out = fs.readFileSync(tmp, 'utf8'); try { fs.unlinkSync(tmp); } catch (e) { /* 消せなくても よい */ }
+  let current = '(開始前)', ended = false, nType = 0, nFloor = 0, slowT = null, slowF = null, pmax = 0, safe = 0;
+  out.split('\n').forEach(function (line) {
+    let m; try { m = JSON.parse(line); } catch (e) { return; }
+    if (m.start) { current = m.start; return; }
+    if (m.end) { ended = true; return; }
+    ok(m.errs === 0, m.done + ': 例外が出た(' + m.errs + ' 回) ' + m.first);
+    ok(m.bad === 0, m.done + ': こわれた結果(' + m.bad + ' 回) ' + m.first);
+    ok(m.max < SLOW_MS, m.done + ': 1回に ' + m.max.toFixed(1) + 'ms かかった');
+    ok(m.avg < AVG_MS, m.done + ': 平均 ' + m.avg.toFixed(3) + 'ms');
+    if (m.kind === 'type') { nType++; if (!slowT || m.max > slowT.max) slowT = m; }
+    else {
+      nFloor++; safe += m.safe; pmax = Math.max(pmax, m.pmax);
+      ok(m.safe <= m.n / 100, m.done + ': 安全な階への 作り直しが 多すぎる(' + m.safe + ')'); ok(m.pmax < SLOW_MS, m.done + ': 道探しに ' + m.pmax.toFixed(1) + 'ms');
+      if (!slowF || m.max > slowF.max) slowF = m;
+    }
+  });
+  if (slowT) console.log('  型 ' + nType + ' 種類 × ' + FUZZ_TYPES + ' 問: いちばん遅い 1問 ' + slowT.max.toFixed(2) + 'ms(' + slowT.done + '、平均 ' + slowT.avg.toFixed(4) + 'ms)');
+  if (slowF) console.log('  階 ' + nFloor + ' 個 × ' + FUZZ_FLOORS + ' 回: いちばん遅い 生成 ' + slowF.max.toFixed(2) + 'ms(' + slowF.done + '、平均 ' + slowF.avg.toFixed(4) + 'ms)、道探し 最大 ' + pmax.toFixed(2) + 'ms、安全な階への作り直し ' + safe + ' 回');
+  if (!ended) {
+    const why = res.error && res.error.code === 'ETIMEDOUT' ? LIMIT / 1000 + '秒たっても 終わらない(終わらないループの うたがい)' : 'とちゅうで 止まった(終了コード ' + res.status + ')';
+    ok(false, why + ' → 止まった場所: ' + current);
+    console.log('\n✗ 止まる場所があるため、ほかの検査は 行いません(' + current + ' を 先に直してください)');
+    process.exit(1);
+  }
+})();
 
 /* ---------- 1. エンジン ---------- */
 section('エンジン: 答えの判定');
@@ -88,13 +171,14 @@ section('エンジン: 答えの判定');
 section('エンジン: 数式の表示');
 (function () {
   ['sin 75° = {√6 + √2/4}', '2^{-3} = {1/8}', '8^{{2/3}}', '8^{-{2/3}}', '[3]√{27} = 3', 'log_2 8', 'log_{{1/2}} (x - 1) > -2', '□ sin(θ □ □)', '{√□ □ √□/□}', 'a\nb', '0 ≦ θ < 2π']
-    .forEach(s => renderOk('見本', s));
+    .forEach(s => renderOk('見本', s, true));
+  ok(U.mathHTML('□ に入る数').indexOf('class="blank"') < 0 && U.mathHTML('□ に入る数').indexOf('□') >= 0, '問題文の □ は 空欄にせず ただの文字で出す');
   ok(U.mathHTML('{1/2}').indexOf('class="mf"') >= 0, '分数は 縦に組む');
   ok(U.mathHTML('2^3').indexOf('<sup>3</sup>') >= 0, '指数は 上付き');
   ok(U.mathHTML('√3').indexOf('class="mr"') >= 0 && U.mathHTML('√3').indexOf('<svg') >= 0, '√ は 根号を描く');
   ok(U.mathHTML('[3]√8').indexOf('class="mi"') >= 0, '累乗根の 左肩の数');
   ok(U.mathHTML('-1').indexOf('−1') >= 0, '- は − で表示');
-  ok(U.countBlanks('□ sin(θ □ □)') === 3 && (U.mathHTML('□ sin(θ □ □)').match(/class="blank"/g) || []).length === 3, '空欄の数');
+  ok(U.countBlanks('□ sin(θ □ □)') === 3 && (U.mathHTML('□ sin(θ □ □)', true).match(/class="blank"/g) || []).length === 3, '空欄の数');
   ok(U.fillForm('□ sin(θ □ □)', ['2', '-', 'π/6']) === '2 sin(θ - {π/6})', '答えを 式に はめる');
   let threw = false; try { U.mathHTML('{1/2'); } catch (e) { threw = true; } ok(threw, '} の不足は エラーにする');
 })();
@@ -109,6 +193,43 @@ section('エンジン: 開発用表示ではセーブしない');
   ok(/\(DEV \? debugMain\(\) : main\(\)\)/.test(src), '開発用表示では セーブを読まない debugMain で始める');
   const dm = src.slice(src.indexOf('async function debugMain'), src.indexOf('requestAnimationFrame(frame);\n  (DEV'));
   ok(dm.length > 0 && dm.indexOf('load()') < 0 && dm.indexOf('localStorage') < 0, 'debugMain は セーブデータを 読み書きしない');
+})();
+
+section('エンジン: こわれた問題・こわれた階でも 止まらない');
+(function () {
+  // ダンジョン: 作り直しの上限に達したら「安全な階」になる
+  const sf = D.genFloor(123, { tries: 0 }), sd = D.bfs(sf.grid, sf.start);
+  ok(sf.safe === true && sd[sf.exit.y][sf.exit.x] > 0 && sf.chests.length === 1 && sd[sf.chests[0].y][sf.chests[0].x] > 0, '上限に達したら 安全な階(階段と宝箱に 行ける)');
+  ok(sf.grid[sf.start.y][sf.start.x] === D.T.BACK && sf.grid[sf.exit.y][sf.exit.x] === D.T.NEXT, '安全な階にも 入口と 次の階段がある');
+  let threw = false; try { D.genFloor(NaN); D.genFloor(-1); D.genFloor(1e15); D.genFloor(5, { w: 27, h: 21, tries: 3 }); } catch (e) { threw = true; }
+  ok(!threw, 'ダンジョン生成は どんな種でも 例外を出さない');
+  // 問題: 例外を出す型・□ が問題文にある型は 使わず、同じ敵の ほかの型にする
+  const good = { text: 'つぎの値を求めよ。', expr: '2^3', form: '□', answers: ['8'], hint: 'h', explain: ['a', 'b'], mistakes: [] };
+  const fake = { types: {
+    boom: { gen: function () { throw new Error('boom'); } },
+    blankText: { gen: function () { return Object.assign({}, good, { text: '□ に入る数を答えよ。' }); } },
+    count: { gen: function () { return Object.assign({}, good, { form: '□ + □' }); } },
+    badAns: { gen: function () { return Object.assign({}, good, { answers: ['8//2'] }); } },
+    badMark: { gen: function () { return Object.assign({}, good, { explain: ['{1/2', 'b'] }); } },
+    nothing: { gen: function () { return null; } },
+    fine: { gen: function () { return Object.assign({}, good); } } } };
+  let k = 0; const seedFn = () => ++k;
+  ['boom', 'blankText', 'count', 'badAns', 'badMark', 'nothing'].forEach(function (bad) {
+    let q = null, t = false; try { q = M.safeQuestion(fake, [bad, 'fine'], bad, seedFn); } catch (e) { t = true; }
+    ok(!t && q && q.type === 'fine', 'こわれた型(' + bad + ')は とばして 別の型の問題にする');
+    let q2 = 'x', t2 = false; try { q2 = M.safeQuestion(fake, [bad], bad, seedFn); } catch (e) { t2 = true; }
+    ok(!t2 && q2 === null, 'こわれた型(' + bad + ')しかなければ null(戦闘は 安全に終わる)');
+  });
+  ok(M.checkQuestion(M.buildQuestion(fake, 'fine', U.makeRng(1))) === null, '正しい問題は 通る');
+  ok(/□/.test(M.checkQuestion(M.buildQuestion(fake, 'blankText', U.makeRng(1))) || ''), '問題文の □ を 見つける');
+  // 道探し: 囲まれている・盤の外・1マスだけ でも 止まらない
+  const wall = (x, y) => !(x === 2 && y === 2);
+  const r1 = M.path.find(5, 5, wall, { x: 2, y: 2 }, { x: 4, y: 4 });
+  ok(r1.path.length === 0 && r1.goal.x === 2 && r1.goal.y === 2, '囲まれていたら その場に とどまる');
+  const r2 = M.path.find(1, 1, () => false, { x: 0, y: 0 }, { x: 99, y: -99 });
+  ok(r2.path.length === 0, '1マスだけの盤でも 止まらない');
+  const r3 = M.path.find(40, 40, () => false, { x: 0, y: 0 }, { x: 1000, y: 1000 }, () => true);
+  ok(r3.path.length <= 78 && r3.goal.x >= 0 && r3.goal.y >= 0, '盤の外をタップしても 盤の中で止まる');
 })();
 
 /* ---------- 2〜4. コースごと ---------- */
@@ -137,7 +258,11 @@ ids.forEach(function (cid) {
       const tag = label + ' #' + i;
       renderOk(tag + ' text', q.text);
       if (q.expr !== undefined) renderOk(tag + ' expr', q.expr);
-      if (!renderOk(tag + ' form', q.form)) continue;
+      if (!renderOk(tag + ' form', q.form, true)) continue;
+      ok(M.checkQuestion(q) === null, tag + ': 画面に出せる形(' + M.checkQuestion(q) + ')');
+      // 入力画面と同じ組み立てで、空欄の数が 答えの数と 同じ(ちがうと 入力画面が止まる)
+      const ui = U.mathHTML(q.text) + (q.expr ? U.mathHTML(q.expr) : '') + U.mathHTML(q.form, true) + U.mathHTML(q.hint || '');
+      ok((ui.match(/class="blank"/g) || []).length === q.answers.length, tag + ': 入力画面の空欄の数が 答えの数と ちがう');
       renderOk(tag + ' hint', q.hint);
       ok(Array.isArray(q.explain) && q.explain.length >= 2 && q.explain.length <= 3, tag + ': 解説は 2〜3行');
       (q.explain || []).forEach((l, k) => renderOk(tag + ' 解説' + (k + 1), l));
