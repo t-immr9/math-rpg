@@ -301,7 +301,51 @@ function bossRoom(o) {
   return f;
 }
 
+/* タップ移動の道探し(幅優先探索)。
+ *   solid(x,y): 通れないマス   avoid(x,y): 階段など「通り道にはしたくない」マス(行き先としては可)
+ *   もどり値 { path: 1歩ずつのマスの列(今いるマスは含まない), goal: 着くマス, adjacent: goal がタップしたマスのとなりか }
+ *   タップしたマスに行けないときは、いちばん近い(同じ近さなら歩数が少ない)行けるマスを goal にする。 */
+function findPath(w, h, solid, from, to, avoid) {
+  const tx = Math.max(0, Math.min(w - 1, to.x)), ty = Math.max(0, Math.min(h - 1, to.y));
+  function search(av) {
+    const dist = new Int32Array(w * h).fill(-1), prev = new Int32Array(w * h).fill(-1), q = [from.y * w + from.x];
+    dist[q[0]] = 0;
+    for (let k = 0; k < q.length; k++) {
+      const c = q[k], x = c % w, y = (c - x) / w;
+      if (k > 0 && av && av(x, y)) continue;                 // さけたいマスには入れるが、そこから先へは進まない
+      for (let d = 0; d < 4; d++) {
+        const nx = x + [1, -1, 0, 0][d], ny = y + [0, 0, 1, -1][d];
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h || solid(nx, ny)) continue;
+        const n = ny * w + nx;
+        if (dist[n] < 0) { dist[n] = dist[c] + 1; prev[n] = c; q.push(n); }
+      }
+    }
+    return { dist: dist, prev: prev };
+  }
+  let r = search(avoid), goal = -1;
+  const t = ty * w + tx;
+  if (!solid(tx, ty)) {
+    if (r.dist[t] >= 0) goal = t;
+    else if (avoid) { const r2 = search(null); if (r2.dist[t] >= 0) { r = r2; goal = t; } }
+  }
+  if (goal < 0) {
+    let bm = 1e9, bd = 1e9;
+    for (let c = 0; c < w * h; c++) {
+      if (r.dist[c] < 0) continue;
+      const x = c % w, y = (c - x) / w;
+      if (c !== from.y * w + from.x && avoid && avoid(x, y)) continue;
+      const m = Math.abs(x - tx) + Math.abs(y - ty);
+      if (m < bm || (m === bm && r.dist[c] < bd)) { bm = m; bd = r.dist[c]; goal = c; }
+    }
+  }
+  const path = [];
+  for (let c = goal; c !== from.y * w + from.x; c = r.prev[c]) path.unshift({ x: c % w, y: Math.floor(c / w) });
+  const gx = goal % w, gy = Math.floor(goal / w);
+  return { path: path, goal: { x: gx, y: gy }, adjacent: Math.abs(gx - tx) + Math.abs(gy - ty) === 1 };
+}
+
 /* ===== 5. 強さ・レベルの計算 ===== */
+const MOVE_MS = 280;   // ★移動の速さ: 1マス歩くのにかかる時間(ミリ秒)。小さくすると速くなる
 const JOBS = [
   { id: 'hero', name: '勇者', desc: 'バランスがよい。経験値が すこし多い(+5%)', xp: 1.05 },
   { id: 'warrior', name: '戦士', desc: 'HPが 高い', hp: 1.2 },
@@ -463,6 +507,7 @@ const NPC = { mirror: true, rows: ['........', '.....hhh', '....hhhh', '....hsss
 M.util = { makeRng: makeRng, gcd: gcd, parseValue: parseValue, judge: judge, mistakes: cleanMistakes, fracStr: fracStr, piStr: piStr,
   parseMarkup: parseMarkup, mathHTML: mathHTML, countBlanks: countBlanks, am: answerMarkup, answerMarkup: answerMarkup, fillForm: fillForm };
 M.dungeon = { T: T, isSolid: isSolid, bfs: bfs, genFloor: genFloor, floorSeed: floorSeed, bossRoom: bossRoom };
+M.path = { find: findPath }; M.MOVE_MS = MOVE_MS;
 M.rules = rules; M.JOBS = JOBS; M.buildQuestion = buildQuestion; M.bossIds = bossIds;
 M.password = { encode: pwEncode, decode: pwDecode, alphabet: PW };
 M.art = { PAL: PAL, TILES: TILES, HEROES: HEROES, NPC: NPC, expandSprite: expandSprite, heroRows: heroRows, heroPal: heroPal };
@@ -473,7 +518,7 @@ M.BASE_LEGEND = {
 M.newState = function (c) {
   return { v: 1, name: c.name, gender: c.gender ? 1 : 0, job: c.job, lv: 1, xp: 0, hp: rules.maxHp(1, c.job), gold: 20, items: { herb: 3, bell: 0 },
     flags: {}, titles: [], title: null, pos: null, dun: null, combo: 0, review: [],
-    stats: { battles: 0, correct: 0, wrong: 0, maxCombo: 0, mistakes: {}, types: {} }, days: { last: '', streak: 0 }, sound: false };
+    stats: { battles: 0, correct: 0, wrong: 0, maxCombo: 0, mistakes: {}, types: {} }, days: { last: '', streak: 0 }, sound: false, dpad: false };
 };
 
 /* ===== 8. ブラウザ部 ===== */
@@ -589,6 +634,9 @@ M.start = function (courseId, mount) {
     if (on) { ensureAudio(); playBgm(bgmName); } else playBgm(bgmName);
   }
   $('snd').onclick = function () { setSound(!soundOn); };
+  /* 十字キーと A/B ボタンの表示(初期設定はオフ = タップ移動だけ) */
+  function setPad(on) { if (S) S.dpad = !!on; mount.classList.toggle('nopad', !on); }
+  setPad(false);
   $('mnu').onclick = function () { press('B'); };
 
   /* ---------- ドット絵 ---------- */
@@ -748,7 +796,42 @@ M.start = function (courseId, mount) {
   });
   document.addEventListener('keyup', function (e) { if (e.key === kheld) { kheld = null; dirRelease(); } });
   document.addEventListener('visibilitychange', function () { if (document.hidden) save(); });
+  /* ---------- タップ移動 ---------- */
+  let route = null, camX = 0, camY = 0;
+  const STEP_KINDS = { next: 1, back: 1, warp: 1, hidden: 1 };
+  function canAct(c) { return !!c && c.solid && (!!c.event || c.k === 'boss' || c.k === 'seal'); }
+  function tapTile(tx, ty) {
+    if (mode !== 'map' || !S || !cur || busy || modal) return;
+    tx = Math.max(0, Math.min(cur.w - 1, tx)); ty = Math.max(0, Math.min(cur.h - 1, ty));
+    const from = P.moving ? { x: P.tx, y: P.ty } : { x: P.x, y: P.y }, cell = cur.cell(tx, ty);
+    const r = findPath(cur.w, cur.h,
+      function (x, y) { const c = cur.cell(x, y); return !c || !!c.solid; }, from, { x: tx, y: ty },
+      function (x, y) { const c = cur.cell(x, y); return !!c && !c.solid && (!!c.event || !!STEP_KINDS[c.k]); });
+    const act = canAct(cell) && r.adjacent ? { x: tx, y: ty } : null;
+    if (!r.path.length && !act) { route = null; return; }
+    route = { path: r.path, act: act, mark: act || r.goal };
+    input.dir = null; sfx('cursor');
+  }
+  function stepRoute() {
+    if (route.path.length) {
+      const n = route.path[0], c = cur.cell(n.x, n.y), dx = n.x - P.x, dy = n.y - P.y;
+      if (!c || c.solid || Math.abs(dx) + Math.abs(dy) !== 1) { route = null; return; }
+      route.path.shift();
+      tryMove(dx > 0 ? 'right' : dx < 0 ? 'left' : dy > 0 ? 'down' : 'up');
+      return;
+    }
+    const a = route.act; route = null;
+    if (a) { P.dir = a.x > P.x ? 'right' : a.x < P.x ? 'left' : a.y > P.y ? 'down' : 'up'; bump(cur.cell(a.x, a.y), a.x, a.y); }
+  }
+  stageEl.addEventListener('pointerdown', function (e) {
+    ensureAudio();
+    if (ovEl.className === 'on' || mode !== 'map' || !S || !cur) return;
+    if (modal) { if (modal.A && !modal.noTap) { e.preventDefault(); press('A'); } return; }
+    const r = cv.getBoundingClientRect();
+    tapTile(Math.floor(((e.clientX - r.left) / r.width * cv.width + camX) / 16), Math.floor(((e.clientY - r.top) / r.height * cv.height + camY) / 16));
+  });
   function run(fn) {
+    route = null;
     if (busy) return; busy = true;
     Promise.resolve().then(fn).catch(function (e) { console.error(e); }).then(function () { busy = false; if (input.dir) input.lock = true; hud(); });
   }
@@ -781,7 +864,7 @@ M.start = function (courseId, mount) {
   function loadMap() {
     if (S.dun) { cur = dungeonMap(); P.x = S.dun.x; P.y = S.dun.y; }
     else { if (!S.pos || !course.maps[S.pos.map]) S.pos = Object.assign({}, course.start); cur = staticMap(S.pos.map); P.x = S.pos.x; P.y = S.pos.y; }
-    P.moving = false; P.px = P.x * 16; P.py = P.y * 16;
+    P.moving = false; P.px = P.x * 16; P.py = P.y * 16; route = null;
     stepsLeft = 4 + Math.floor(Math.random() * 6);
     if (mode === 'map') playBgmFor();
   }
@@ -804,11 +887,13 @@ M.start = function (courseId, mount) {
   function updateMap(dt) {
     if (busy || modal) return;
     if (P.moving) {
-      P.t += dt / 140;
+      P.t += dt / MOVE_MS;
       if (P.t >= 1) { P.moving = false; setPos(P.tx, P.ty); arrive(); }
       else { P.px = (P.x + (P.tx - P.x) * P.t) * 16; P.py = (P.y + (P.ty - P.y) * P.t) * 16; }
     }
-    if (!P.moving && !busy && input.dir && !input.lock) tryMove(input.dir);
+    if (P.moving || busy) return;
+    if (input.dir && !input.lock) { route = null; tryMove(input.dir); }      // 矢印キー・十字キーが優先
+    else if (route) stepRoute();
   }
   function arrive() {
     const cell = cur.cell(P.x, P.y); if (!cell) return;
@@ -903,6 +988,7 @@ M.start = function (courseId, mount) {
     let camx = Math.round(P.px + 8 - VW / 2), camy = Math.round(P.py + 8 - VH / 2);
     camx = mw <= VW ? Math.round((mw - VW) / 2) : Math.max(0, Math.min(mw - VW, camx));
     camy = mh <= VH ? Math.round((mh - VH) / 2) : Math.max(0, Math.min(mh - VH, camy));
+    camX = camx; camY = camy;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, VW, VH);
     for (let ty = Math.floor(camy / 16); ty <= Math.floor((camy + VH - 1) / 16); ty++) {
       for (let tx = Math.floor(camx / 16); tx <= Math.floor((camx + VW - 1) / 16); tx++) {
@@ -914,6 +1000,14 @@ M.start = function (courseId, mount) {
     if (cur.isBoss && !S.flags['boss:' + cur.dun.boss]) {
       const sp = enemyCanvas(course.enemies[cur.dun.boss]), b = cur.floor.boss;
       ctx.drawImage(sp, b.x * 16 + 8 - sp.width / 2 - camx, b.y * 16 + 16 - sp.height - camy + (Math.floor(t / 500) % 2));
+    }
+    if (route) {                                   // タップした行き先の印(四すみの かぎ形)
+      const mx = route.mark.x * 16 - camx, my = route.mark.y * 16 - camy, o = Math.floor(t / 250) % 2;
+      [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(function (cn) {
+        const x = mx + (cn[0] ? 15 - o : o), y = my + (cn[1] ? 15 - o : o), sx = cn[0] ? -1 : 1, sy = cn[1] ? -1 : 1;
+        ctx.fillStyle = '#0f0f1b'; ctx.fillRect(Math.min(x, x + sx * 4) - (sx < 0 ? 0 : 1), y - 1, 6, 3); ctx.fillRect(x - 1, Math.min(y, y + sy * 4) - (sy < 0 ? 0 : 1), 3, 6);
+        ctx.fillStyle = '#f8d820'; ctx.fillRect(Math.min(x, x + sx * 3), y, 4, 1); ctx.fillRect(x, Math.min(y, y + sy * 3), 1, 4);
+      });
     }
     const bob = P.moving && P.t > 0.5 ? 1 : 0;
     ctx.drawImage(heroCanvas(S.job, S.gender), Math.round(P.px) - camx, Math.round(P.py) - camy - 2 - bob);
@@ -967,11 +1061,13 @@ M.start = function (courseId, mount) {
   }
   async function openMenu() {
     for (;;) {
-      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '記録のことば', 'とじる'], { cols: 2, prompt: 'メニュー' });
+      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '十字キー:' + (S.dpad ? 'オン' : 'オフ'), '記録のことば', 'とじる'],
+        { cols: 2, prompt: 'メニュー\n(歩く:マップをタップ。十字キーを出すこともできる)' });
       if (c === 0) await statusScreen();
       else if (c === 1) { if (await itemMenu(false) === 'bell') break; }
       else if (c === 2) setSound(!soundOn);
-      else if (c === 3) await passwordShow();
+      else if (c === 3) { setPad(!S.dpad); save(); }
+      else if (c === 4) await passwordShow();
       else break;
     }
     showMsg('');
@@ -1337,7 +1433,7 @@ M.start = function (courseId, mount) {
       else if (a === 'new') { const c = await createScreen({}, false); S = M.newState(c); fresh = true; }
       else if (a === 'pw') S = await passwordInput();
     }
-    setSound(!!S.sound);
+    setSound(!!S.sound); setPad(!!S.dpad);
     touchDays(); mode = 'map'; loadMap(); hud(); save(); playBgmFor();
     busy = true;
     if (fresh && course.intro) for (const l of course.intro) await say(l.replace('{n}', S.name));
@@ -1348,8 +1444,9 @@ M.start = function (courseId, mount) {
     const a = debug.split(':');
     S = M.newState({ name: 'ソラ', gender: params.get('g') === '1' ? 1 : 0, job: params.get('job') || 'hero' });
     S.lv = parseInt(params.get('lv') || '5', 10); S.hp = maxHp(); S.gold = 123; S.days.streak = 3; S.pos = Object.assign({}, course.start);
-    mode = 'map'; setStage('map'); loadMap(); hud();
-    if (a[0] === 'sprites') {
+    mode = 'map'; setStage('map'); loadMap(); hud(); setPad(params.get('pad') === '1');
+    if (a[0] === 'tap') { tapTile(parseInt(a[1], 10), parseInt(a[2], 10)); }
+    else if (a[0] === 'sprites') {
       const list = [];
       JOBS.forEach(function (j) { list.push(heroCanvas(j.id, 0)); list.push(heroCanvas(j.id, 1)); });
       Object.keys(course.enemies).forEach(function (id) { list.push(enemyCanvas(course.enemies[id])); if (course.enemies[id].phase2) list.push(enemyCanvas(course.enemies[id], true)); });
@@ -1382,6 +1479,19 @@ M.start = function (courseId, mount) {
         return { judge: judge(q, raws), raws: raws };
       };
       setInterval(function () { if (modal && modal.A) modal.A(); }, 5);
+      try {
+        /* 画面の更新回数で待つ(ヘッドレスでは 時間の進み方が ちがうため) */
+        const frames = function (n, until) { return new Promise(function (res) { (function f() { updateMap(16); if (--n <= 0 || (until && until())) res(n); else setTimeout(f, 1); })(); }); };
+        const idle = function () { return !route && !P.moving && !busy; };
+        let moved = 0;
+        tapTile(12, 8); const mark = JSON.stringify(route && route.mark), steps = route.path.length;
+        await frames(3000, function () { moved++; return idle(); });
+        log.push('タップ移動 (7,9)→(12,8): ' + steps + '歩 印=' + mark + ' → 着いた位置 ' + P.x + ',' + P.y + ' / 1歩あたり ' + Math.round(moved * 16 / steps) + 'ms(設定 ' + MOVE_MS + ')');
+        tapTile(1, 1); await frames(40); const mid = P.x + ',' + P.y; tapTile(2, 7); await frames(6000, function () { return idle() && P.x <= 3; });
+        log.push('途中(' + mid + ')で行き先変更 → 町の人(2,7)をタップ: 位置 ' + P.x + ',' + P.y + ' 向き=' + P.dir + '(話しかけて 会話が終わった)');
+        tapTile(7, 12); await frames(6000, idle); log.push('通れない木(7,12)をタップ → いちばん近いマスへ: map=' + S.pos.map + ' ' + P.x + ',' + P.y);
+        S.pos = Object.assign({}, course.start); loadMap();
+      } catch (e) { log.push('EXCEPTION ' + (e.stack || e)); }
       busy = true;
       try {
         S.lv = 8; S.hp = maxHp(); log.push('boss kahou Lv8 全問正解 → ' + await battle('kahou') + ' / Lv' + S.lv + ' flag=' + S.flags['boss:kahou'] + ' titles=' + S.titles.join(','));

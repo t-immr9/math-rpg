@@ -195,6 +195,74 @@ ids.forEach(function (cid) {
     else ok(dist[h.y][h.x] < 0 && D.isSolid(f.grid[h.y][h.x]), '条件を満たすまで 隠し通路は 通れない');
   });
 
+  section('タップ移動の道探し');
+  (function () {
+    /* 1つの盤面で、いろいろなマスをタップして確かめる */
+    function checkBoard(label, w, h, solid, avoid, from, rng, taps) {
+      const grid = []; for (let y = 0; y < h; y++) { grid.push([]); for (let x = 0; x < w; x++) grid[y].push(solid(x, y) ? D.T.WALL : D.T.FLOOR); }
+      const dist = D.bfs(grid, from);
+      for (let k = 0; k < taps; k++) {
+        const to = { x: rng.int(-1, w), y: rng.int(-1, h) }, cx = Math.max(0, Math.min(w - 1, to.x)), cy = Math.max(0, Math.min(h - 1, to.y));
+        const tag = label + ' (' + from.x + ',' + from.y + ')→(' + to.x + ',' + to.y + ')';
+        [null, avoid].forEach(function (av) {
+          const r = tryDo(tag, () => M.path.find(w, h, solid, from, to, av)); if (!r) return;
+          let px = from.x, py = from.y, good = true, through = false;
+          r.path.forEach(function (p, i) {
+            if (Math.abs(p.x - px) + Math.abs(p.y - py) !== 1 || p.x < 0 || p.y < 0 || p.x >= w || p.y >= h || solid(p.x, p.y)) good = false;
+            if (av && i < r.path.length - 1 && av(p.x, p.y)) through = true;
+            px = p.x; py = p.y;
+          });
+          ok(good, tag + ': 1マスずつ進み、壁を通らない');
+          ok(px === r.goal.x && py === r.goal.y && !solid(r.goal.x, r.goal.y), tag + ': 道の終わりが 行き先(通れるマス)');
+          const reachable = !solid(cx, cy) && dist[cy][cx] >= 0;
+          if (reachable) {
+            ok(r.goal.x === cx && r.goal.y === cy, tag + ': 行けるマスには 必ずたどり着く');
+            if (!av) ok(r.path.length === dist[cy][cx], tag + ': 最短の道(' + r.path.length + ' 歩、最短は ' + dist[cy][cx] + ')');
+            else ok(r.path.length >= dist[cy][cx], tag + ': 最短より短くは ならない');
+          } else {
+            let best = 1e9;
+            for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (dist[y][x] >= 0 && !(av && av(x, y) && !(x === from.x && y === from.y))) best = Math.min(best, Math.abs(x - cx) + Math.abs(y - cy));
+            ok(Math.abs(r.goal.x - cx) + Math.abs(r.goal.y - cy) === best, tag + ': 行けないマスなら いちばん近い行けるマスへ');
+            ok(!through, tag + ': 階段などを 通り道にしない');
+          }
+          ok(r.adjacent === (Math.abs(r.goal.x - cx) + Math.abs(r.goal.y - cy) === 1), tag + ': となりかどうかの判定');
+        });
+      }
+    }
+    let boards = 0;
+    for (let s = 0; s < 150; s++) {
+      const f = D.genFloor(D.floorSeed(s * 97 + 3, s % 3)), rng = U.makeRng(s + 77);
+      const solid = (x, y) => D.isSolid(f.grid[y][x]), avoid = (x, y) => f.grid[y][x] === D.T.NEXT || f.grid[y][x] === D.T.BACK;
+      checkBoard('ダンジョン#' + s, f.w, f.h, solid, avoid, f.start, rng, 25); boards++;
+      // 次の階段をタップしたら、階段まで行ける
+      const r = M.path.find(f.w, f.h, solid, f.start, f.exit, avoid);
+      ok(r.goal.x === f.exit.x && r.goal.y === f.exit.y && r.path.length > 0, 'ダンジョン#' + s + ': 階段をタップすると 階段に着く');
+      f.chests.forEach(c => { const rc = M.path.find(f.w, f.h, solid, f.start, c, avoid); ok(rc.goal.x === c.x && rc.goal.y === c.y, 'ダンジョン#' + s + ': 宝箱をタップすると 宝箱に着く'); });
+    }
+    [true, false].forEach(function (alive) {
+      const f = D.bossRoom({ bossAlive: alive, hasHidden: true, hiddenOpen: !alive }), solid = (x, y) => D.isSolid(f.grid[y][x]);
+      const avoid = (x, y) => [D.T.BACK, D.T.WARP, D.T.HIDDEN].indexOf(f.grid[y][x]) >= 0;
+      checkBoard('ボス部屋', f.w, f.h, solid, avoid, f.start, U.makeRng(alive ? 1 : 2), 200); boards++;
+      const r = M.path.find(f.w, f.h, solid, f.start, alive ? f.boss : f.hidden, avoid);
+      if (alive) ok(r.adjacent && r.path.length > 0, 'ボスをタップすると となりまで歩く(そこで調べる)');
+      else ok(r.goal.x === f.hidden.x && r.goal.y === f.hidden.y && !r.path.slice(0, -1).some(p => avoid(p.x, p.y)), '隠し通路をタップすると、魔法陣を ふまずに 通路へ着く');
+    });
+    Object.keys(C.maps).forEach(function (mid) {
+      const m = C.maps[mid], lg = Object.assign({}, M.BASE_LEGEND, C.legend || {}, m.legend || {}), w = m.rows[0].length, h = m.rows.length;
+      const cell = (x, y) => lg[m.rows[y][x]], solid = (x, y) => !!cell(x, y).solid, avoid = (x, y) => !cell(x, y).solid && !!cell(x, y).event;
+      const walk = []; m.rows.forEach((r, y) => r.split('').forEach((ch, x) => { if (!lg[ch].solid) walk.push({ x: x, y: y }); }));
+      const rng = U.makeRng(mid.length + 9);
+      for (let k = 0; k < 12; k++) { checkBoard('マップ ' + mid, w, h, solid, avoid, rng.pick(walk), rng, 60); boards++; }
+      // 町の人・看板をタップしたら となりまで歩ける
+      const from = mid === C.start.map ? C.start : walk[0];
+      m.rows.forEach((r, y) => r.split('').forEach((ch, x) => {
+        if (lg[ch].solid && lg[ch].event && mid === C.start.map) ok(M.path.find(w, h, solid, from, { x: x, y: y }, avoid).adjacent, 'マップ ' + mid + ' の「' + ch + '」をタップすると となりまで歩く');
+      }));
+    });
+    console.log('  盤面 ' + boards + ' 枚で 検査');
+    ok(M.MOVE_MS >= 200 && M.MOVE_MS <= 400, '移動の速さ MOVE_MS(' + M.MOVE_MS + ')が ゆっくりめ(200〜400)');
+  })();
+
   section('コースのデータ');
   const legendOf = m => Object.assign({}, M.BASE_LEGEND, C.legend || {}, m.legend || {});
   const tileOk = name => !!(M.art.TILES[name] || (C.tiles && C.tiles[name]));

@@ -948,7 +948,7 @@ M.registerCourse({
   subtitle: '加法定理 〜 指数関数・対数関数',
   start: { map: 'town', x: 7, y: 9 },
   intro: ['ここは はじまりの町。', '{n}は 期末考査という 大いなる試練に そなえ、旅に 出ることに した。',
-    '町の南から 外に出よう。東の草原は 三角関数、西の草原は 指数・対数の 修行場だ。\n(十字キーで歩く / A:しらべる・決定 / B:メニュー)'],
+    '町の南から 外に出よう。東の草原は 三角関数、西の草原は 指数・対数の 修行場だ。\n(歩く:行きたい場所を タップ / 人や看板も タップで調べる / 右上の「メニュー」で 十字キーも出せる)'],
   levelCap: { base: 30, extended: 40, extendFlag: 'boss:maou' },
   zones: { east: { enemies: ['puchisin', 'nezumi', 'radbat', 'kaeru'] }, west: { enemies: ['mogura', 'mushi', 'kinoko', 'hato'] } },
   maps: maps, dungeons: dungeons, enemies: enemies, sprites: sprites, types: types,
