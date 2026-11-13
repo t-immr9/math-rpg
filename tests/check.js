@@ -99,6 +99,18 @@ section('エンジン: 数式の表示');
   let threw = false; try { U.mathHTML('{1/2'); } catch (e) { threw = true; } ok(threw, '} の不足は エラーにする');
 })();
 
+section('エンジン: 開発用表示ではセーブしない');
+(function () {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const sets = src.match(/localStorage\.(setItem|removeItem|clear)\(/g) || [];
+  ok(sets.length === 1, 'localStorage に書くのは save() の1か所だけ(' + sets.length + ' か所)');
+  ok(/function save\(\) \{ if \(!S \|\| DEV\) return;/.test(src), 'save() は 開発用表示(DEV)なら 何もしない');
+  ok(/const DEV = \[[^\]]*'debug'[^\]]*'pad'[^\]]*\]\.some/.test(src), '&debug= や &pad= などがあれば DEV になる');
+  ok(/\(DEV \? debugMain\(\) : main\(\)\)/.test(src), '開発用表示では セーブを読まない debugMain で始める');
+  const dm = src.slice(src.indexOf('async function debugMain'), src.indexOf('requestAnimationFrame(frame);\n  (DEV'));
+  ok(dm.length > 0 && dm.indexOf('load()') < 0 && dm.indexOf('localStorage') < 0, 'debugMain は セーブデータを 読み書きしない');
+})();
+
 /* ---------- 2〜4. コースごと ---------- */
 const ids = Object.keys(M.courses);
 ok(ids.length > 0, 'コースが 1つ以上ある');

@@ -560,6 +560,9 @@ M.start = function (courseId, mount) {
   if (!course) { mount.textContent = 'コースが見つかりません: ' + courseId; return; }
   const SAVE_KEY = 'mathrpg:' + course.id;
   const params = new URLSearchParams(location.search), debug = params.get('debug') || '';
+  /* 開発用の URL(&debug= &pad= &lv= &job= &g= のどれか)で開いたときは「開発用表示」。
+     セーブの読み込みも書き込みも 一切しない(公開ページで使われても 進み具合に影響しない)。 */
+  const DEV = ['debug', 'pad', 'lv', 'job', 'g'].some(function (k) { return params.has(k); });
   mount.innerHTML =
     '<div id="hud"><span id="hudl"></span><span id="hudr"><button id="mnu" class="mini">メニュー</button><button id="snd" class="mini">♪オフ</button></span></div>' +
     '<div id="stage"><canvas id="cv" width="240" height="176"></canvas><div id="ename"></div><div id="toast"></div><div id="banner"></div><div id="cutin"></div><div id="fx"></div></div>' +
@@ -676,7 +679,7 @@ M.start = function (courseId, mount) {
   }
 
   /* ---------- セーブ ---------- */
-  function save() { if (!S || debug) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* 保存できない端末でも遊べるようにする */ } }
+  function save() { if (!S || DEV) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* 保存できない端末でも遊べるようにする */ } }
   function load() {
     try {
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
@@ -1510,7 +1513,7 @@ M.start = function (courseId, mount) {
     else if (a[0] === 'say') say('ソラは レベル6に 上がった!\nsin 75° = {√6 + √2/4}、2^{-3} = {1/8}、[3]√{27} = 3');
   }
   requestAnimationFrame(frame);
-  (debug ? debugMain() : main()).catch(function (e) { console.error(e); });
+  (DEV ? debugMain() : main()).catch(function (e) { console.error(e); });
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = M;
