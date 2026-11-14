@@ -115,11 +115,17 @@ function typeable(raw, keys) {
   if (raw === '*') return true;
   if (raw === '-') return true;
   if (raw === '+' || raw === '<' || raw === '>') return keys.indexOf(raw) >= 0;
-  if (raw.indexOf('/') >= 0 && keys.indexOf('分数') < 0) return false;
+  if (!/^[-0-9√π/.+±()]+$/.test(raw)) return false;
+  const pf = /^\((.+)\)\/(.+)$/.exec(raw), parts = pf ? [pf[1], pf[2]] : raw.split('/');
+  if (parts.length > 1 && keys.indexOf('分数') < 0) return false;
   if (raw.indexOf('√') >= 0 && keys.indexOf('√') < 0) return false;
   if (raw.indexOf('π') >= 0 && keys.indexOf('π') < 0) return false;
   if (raw.indexOf('.') >= 0 && keys.indexOf('.') < 0) return false;
-  return raw.split('/').every(p => p.length >= 1 && p.length <= 6) && /^[-0-9√π/.]+$/.test(raw);
+  if (raw.indexOf('±') >= 0 && keys.indexOf('±') < 0) return false;
+  const joined = /[+±]/.test(parts[0]) || parts[0].indexOf('-', 1) > 0;          // 2つの項を つないだ形
+  if (joined && keys.indexOf('±') < 0 && keys.indexOf('+') < 0) return false;
+  if (parts[0].indexOf('+') >= 0 && keys.indexOf('+') < 0) return false;
+  return parts.every(p => p.length >= 1 && p.length <= 10);
 }
 
 /* ---------- 0. 止まらないこと・時間がかかりすぎないこと(最初に行う) ---------- */
@@ -254,6 +260,31 @@ section('エンジン: 小数・選ぶ・並べ替え・不等式の答え');
   ['badC', 'badI', 'badF'].forEach(b => ok(typeof M.checkQuestion(M.buildQuestion(fake, b, U.makeRng(1))) === 'string' && M.safeQuestion(fake, [b], b, () => 1) === null, 'こわれた問題(' + b + ')は 出さない'));
 })();
 
+section('エンジン: 和・差の形の値(2±√7 など)');
+(function () {
+  const J = (ans, inp) => U.judge({ answers: [ans] }, [inp]).result, V = U.parseValue;
+  ok(J('2±√7', '2±√7') === 'correct' && J('(3±√5)/2', '(3±√5)/2') === 'correct' && J('-1±2√3', '-1±2√3') === 'correct' && J('±3', '±3') === 'correct' && J('±√3/2', '±√3/2') === 'correct', '± の答え');
+  ok(J('2±√7', '2+√7') === 'wrong' && J('2±√7', '2-√7') === 'wrong' && J('2±√7', '-2±√7') === 'wrong' && J('2±√7', '2±√5') === 'wrong' && J('(3±√5)/2', '3±√5') === 'wrong', '± の 片方だけ・符号ちがい・√ の中身ちがい・分母の わすれは 不正解');
+  ok(J('2±√7', '(4±2√7)/2') === 'unsimplified' && J('2±√7', '2±√28') === 'wrong' && J('2±2√7', '2±√28') === 'unsimplified' && J('(3±√5)/2', '(6±2√5)/4') === 'unsimplified', '約分していない・√ の中を 簡単にしていない形は 入れ直し');
+  ok(J('2+√7', '2+√7') === 'correct' && J('2-√7', '2-√7') === 'correct' && J('2+√7', '2-√7') === 'wrong' && J('(3-√5)/2', '(3-√5)/2') === 'correct' && J('2+√7', '√7+2') === 'correct', '+ − の値(項の順は どちらでも)');
+  ok(J('√6+√2', '√2+√6') === 'correct' && J('(√6-√2)/4', '(√6-√2)/4') === 'correct' && J('(√6-√2)/4', '(√2-√6)/4') === 'wrong', '√ どうしの 和・差');
+  ok(J('5', '2+3') === 'unsimplified' && J('4', '2+√4') === 'unsimplified' && J('3√2', '√2+2√2') === 'unsimplified' && J('2', '2±√0') === 'unsimplified', '1つの数に まとまる書き方は 入れ直し');
+  ['2±', '±', '2±3', '3±√5/2', '(3±√5)', '(3)/2', '2+√7+1', '2±√7±1', '(3±√5)/√2', '2±π', '1.5±√2', '±-3', '(3±√5)/0'].forEach(r => ok(V(r) === null, r + ' は 書き方の誤り'));
+  ok(Math.abs(V('2-√7').num - (2 - Math.sqrt(7))) < 1e-12 && Math.abs(V('(3+√5)/2').num - (3 + Math.sqrt(5)) / 2) < 1e-12, '+ − の値の数値');
+  const pm = V('(3±√5)/2'); ok(pm.pm && isNaN(pm.num) && Math.abs(pm.nums[0] - (3 - Math.sqrt(5)) / 2) < 1e-12 && Math.abs(pm.nums[1] - (3 + Math.sqrt(5)) / 2) < 1e-12, '± の値は 2つの数の組');
+  ok(V('2±√7').simple && V('(3±√5)/2').simple && !V('(4±2√6)/2').simple && !V('0±√3').simple && V('±√3').key === V('0±√3').key, '最も簡単な形かどうか');
+  ok(U.am('2±√7') === '2 ± √7' && U.am('(3±√5)/2') === '{3 ± √5/2}' && U.am('-1-2√3') === '-1 - 2√3' && U.am('±√3/2') === '±{√3/2}' && U.am('-√7') === '-√7', '和・差の値の表示');
+  renderOk('± の表示', U.am('(-1±√13)/2')); renderOk('+ の表示', 'x < ' + U.am('2-√7') + ', ' + U.am('2+√7') + ' < x');
+  // 不等式の境界
+  const S = (kind, eq, a, b) => ({ input: 'ineq', sol: { kind: kind, eq: eq, a: a, b: b }, mistakes: [], explain: ['a', 'b'], text: 't', hint: 'h', keys: ['+', '√'] }), I = (kind, eq, raws) => ({ kind: kind, eq: eq, raws: raws });
+  const q = S('outside', false, '2-√7', '2+√7');
+  ok(M.checkQuestion(q) === null && M.judgeAny(q, I('outside', false, ['2-√7', '2+√7'])).result === 'correct' && M.answerText(q) === 'x < 2 - √7, 2 + √7 < x', 'x < 2−√7, 2+√7 < x(' + M.answerText(q) + ')');
+  ok(M.judgeAny(q, I('outside', false, ['2+√7', '2-√7'])).result === 'wrong' && M.judgeAny(q, I('between', false, ['2-√7', '2+√7'])).result === 'wrong' && M.judgeAny(q, I('outside', false, ['(4-2√7)/2', '2+√7'])).result === 'unsimplified', '境界の 左右が逆・内外が逆は 不正解、約分前は 入れ直し');
+  ok(M.sol.contains(q.sol, -1) && !M.sol.contains(q.sol, 0) && M.sol.contains(q.sol, 5) && !M.sol.contains(q.sol, 2 - Math.sqrt(7)), '境界が √ を含む範囲に 入るかどうか');
+  ok(typeof M.checkQuestion(S('between', false, '2+√7', '2-√7')) === 'string' && typeof M.checkQuestion(S('gt', false, '2±√7')) === 'string', '境界が 大小逆・± の不等式は 問題として 出さない');
+  ok(typeable('(3±√5)/2', ['±', '√', '分数']) && !typeable('(3±√5)/2', ['±', '√']) && !typeable('2±√7', ['+', '√']) && typeable('2-√7', ['+', '√']) && !typeable('2-√7', ['√']) && !typeable('2+√7', ['±', '√']), 'キーで入力できるかの 判定');
+})();
+
 section('エンジン: 図(SVG)');
 (function () {
   const G = M.geo, R = U.makeRng(77), fig = f => tryDo('図 ' + f.type, () => M.figure.svg(f));
@@ -306,6 +337,20 @@ section('エンジン: 図(SVG)');
       ok((sv.match(/<text/g) || []).length === Object.keys(sd.verts).length && (sv.match(/<line/g) || []).length === sd.edges.length + 1, '図 見取り図: 頂点の名前と 辺が そろっている');
     });
   }
+  // 見取り図の 頂点の名前が、辺・対角線・ほかの名前に 重ならない
+  const dseg = (pt, a, b) => { const vx = b[0] - a[0], vy = b[1] - a[1], L2 = vx * vx + vy * vy, t = L2 ? Math.max(0, Math.min(1, ((pt[0] - a[0]) * vx + (pt[1] - a[1]) * vy) / L2)) : 0; return Math.hypot(pt[0] - a[0] - vx * t, pt[1] - a[1] - vy * t); };
+  let worst = 99, nSolid = 0;
+  for (let i = 0; i < 400; i++) {
+    const sd = [M.solids.cuboid(R.int(2, 9), R.int(2, 9), R.int(2, 9)), M.solids.prism(R.int(3, 6), R.int(2, 5), R.int(2, 9)), M.solids.pyramid(R.int(3, 6), R.int(2, 5), R.int(2, 9))][i % 3], vn = Object.keys(sd.verts);
+    const sv = M.figure.svg(Object.assign({}, sd, i % 2 ? { segs: [[vn[0], vn[vn.length - 1]]], mark: [sd.edges[R.int(0, sd.edges.length - 1)]] } : {})), lines = [], texts = [];
+    sv.replace(/<line x1="([-\d.]+)" y1="([-\d.]+)" x2="([-\d.]+)" y2="([-\d.]+)"/g, (m, a, b, c, d) => { lines.push([[+a, +b], [+c, +d]]); return m; });
+    sv.replace(/<text x="([-\d.]+)" y="([-\d.]+)"/g, (m, a, b) => { texts.push([+a, +b]); return m; });
+    let near = 99; texts.forEach((t, k) => { lines.forEach(l => { near = Math.min(near, dseg(t, l[0], l[1])); }); texts.forEach((o, j) => { if (j !== k) near = Math.min(near, Math.hypot(t[0] - o[0], t[1] - o[1]) - 6); }); });
+    worst = Math.min(worst, near); nSolid++;
+    ok(texts.length === vn.length && near >= 6.5, '見取り図: 頂点の名前が 線や ほかの名前から 6.5px 以上 離れている(いちばん近い所 ' + near.toFixed(1) + 'px、' + ['直方体', '角柱', '角錐'][i % 3] + ')');
+    ok(!figOk(sv), '見取り図: 名前を置いても 枠から はみ出さない');
+  }
+  console.log('  見取り図 ' + nSolid + ' 個: 頂点の名前と 線の いちばん近い所 ' + worst.toFixed(1) + 'px');
   const cube = M.figure.svg(M.solids.cuboid(4, 4, 4));
   ok((cube.match(/stroke-dasharray/g) || []).length === 3 && (cube.match(/<line/g) || []).length === 12 && 'ABCDEFGH'.split('').every(n => cube.indexOf('>' + n + '</text>') > 0), '立方体: 辺 12本のうち かくれた 3本が 破線、頂点 A〜H');
   const pr = M.solids.prism(3, 3, 5); ok(Object.keys(pr.verts).join('') === 'ADBECF' && pr.edges.length === 9 && pr.faces.length === 5, '三角柱 ABC-DEF: 辺 9、面 5');
@@ -397,7 +442,7 @@ ids.forEach(function (cid) {
       ok(Array.isArray(q.explain) && q.explain.length >= 2 && q.explain.length <= 3, tag + ': 解説は 2〜3行');
       (q.explain || []).forEach((l, k) => renderOk(tag + ' 解説' + (k + 1), l));
       if (q.fig) { const fe = figOk(tryDo(tag + ' 図', () => M.figure.svg(q.fig))); ok(!fe, tag + ' 図: ' + fe); }
-      ok(q.keys.length <= (q.input === 'ineq' ? 3 : 4) && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>', '.'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで(不等式は 3つまで)・決まった名前');
+      ok(q.keys.length <= (q.input === 'ineq' ? 3 : 4) && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>', '.', '±'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで(不等式は 3つまで)・決まった名前');
       renderOk(tag + ' 正解の表示', M.answerText(q));
       ok(M.judgeAny(q, M.correctInput(q)).result === 'correct', tag + ': 正解を入れると 正解になる');
       ok(M.judgeAny(q, M.wrongInput(q)).result === 'wrong', tag + ': まちがいを入れると 不正解になる');
@@ -463,7 +508,8 @@ ids.forEach(function (cid) {
         const sl = q.sol, vs = [sl.a, sl.b].filter(x => x !== undefined), nums = vs.map(x => U.parseValue(x).num);
         ok(vs.every(x => U.parseValue(x).simple && typeable(x, q.keys)), tag + ': 不等式の値は 最も簡単な形で、キーで入力できる ' + JSON.stringify(vs));
         const xs = [0, -1000, 1000, 0.123];
-        nums.forEach(v => xs.push(v, v - 1e-6, v + 1e-6, v - 0.5, v + 0.5, v - 7, v + 7));
+        // 境界ちょうどの数は、√ を含まない値のときだけ 代入する(√ を含む値は 小数にすると ごくわずかに ずれるため、すぐ前後の数で 確かめる)
+        nums.forEach((v, k) => { if (vs[k].indexOf('√') < 0) xs.push(v); xs.push(v - 1e-6, v + 1e-6, v - 0.5, v + 0.5, v - 7, v + 7); });
         if (nums.length === 2) xs.push((nums[0] + nums[1]) / 2);
         // 正解の範囲を、もとの不等式に 数を代入して 確かめる
         if (typeof q.inside === 'function') xs.forEach(x => ok(M.sol.contains(sl, x) === !!q.inside(x), tag + ': x = ' + x + ' が 答えの範囲に 入るかどうかが、もとの不等式と 合わない  ' + (q.expr || '') + ' → ' + M.answerText(q)));

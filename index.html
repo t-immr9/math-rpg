@@ -94,7 +94,15 @@ sup:has(.mf){vertical-align:.9em}
 .blank.act:not(:has(.bp))::after,.bp.cur::after{content:"";display:inline-block;width:2px;height:1em;background:#f8d820;vertical-align:-.1em;animation:blink .8s steps(2) infinite}
 /* 図・選ぶ・並べ替え・不等式の形 */
 .qfig{text-align:center;line-height:0;margin:2px 0}
-.qfig svg{width:100%;max-width:300px;height:auto;max-height:32vh}
+.qfig{cursor:zoom-in}
+.qfig svg{width:100%;max-width:300px;height:auto;max-height:30vh}
+.qz{font-size:11px;color:#8a8aa8;line-height:1.5}
+@media (max-height:780px){#app.roomy #stage{display:none}.qfig svg{max-height:27vh}}
+#zoom{display:none;position:absolute;inset:0;z-index:25;background:#05050c;align-items:center;justify-content:center;padding:6px;cursor:zoom-out}
+#zoom.on{display:flex}
+#zoom .zin{width:100%;text-align:center;line-height:0}
+#zoom svg{width:100%;height:auto;max-height:82vh}
+#zoom .zt{font-size:13px;color:#bcbcbc;line-height:2.4}
 .qs{font-size:12px;color:#bcbcbc;line-height:1.6;margin-top:2px}
 .opts{display:grid;gap:6px;margin:4px 0}
 .opts.c2{grid-template-columns:1fr 1fr}.opts.c3{grid-template-columns:repeat(3,1fr)}.opts.c4{grid-template-columns:repeat(4,1fr)}

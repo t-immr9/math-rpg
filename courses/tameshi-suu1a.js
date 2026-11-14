@@ -1,6 +1,6 @@
 /* ============================================================
  * 試しのコース: 数学I・数学A で使う 新しい機能の見本
- *   図(円と接線・弦・三角形・見取り図・箱ひげ図・散布図・ヒストグラム)/ 選ぶ / 並べ替え / 小数 / 不等式
+ *   図(円と接線・弦・三角形・見取り図・箱ひげ図・散布図・ヒストグラム)/ 選ぶ / 並べ替え / 小数 / 不等式 / 和・差の形の値(2±√7)
  * 本番のコースではない(index.html の一覧には 出さない)。開くときは  index.html?course=tameshi-suu1a
  * 見本の問題は 型の一覧の承認前の「書き方の例」。本番のコースへは そのまま 入れない。
  * ============================================================ */
@@ -257,6 +257,51 @@ types['ts-ineq'] = {
   }
 };
 
+/* ---------- 和・差の形の値(解の公式・不等式の境界) ---------- */
+types['ts-formula'] = {
+  name: '見本: 解の公式(± と √ の答え)', level: 1,
+  gen: function (R) {
+    let b, c, ans, mis;
+    if (R.chance(0.5)) {                 // x = p ± k√r(x の係数が偶数)
+      const pp = R.int(-4, 4), k = R.int(1, 2), r = R.pick([2, 3, 5, 7]), rt = (k === 1 ? '' : k) + '√' + r;
+      b = -2 * pp; c = pp * pp - k * k * r; ans = (pp === 0 ? '' : pp) + '±' + rt;
+      mis = [pp !== 0 ? { answers: [-pp + '±' + rt], tag: 'formula-b-sign', msg: '-b の符号に注意。b = ' + b + ' だから -b = ' + (-b) } : null,
+        { answers: [(pp === 0 ? '' : 2 * pp) + '±' + 2 * k + '√' + r], tag: 'formula-2a', msg: '分母の 2a で、分子の 2つの項を 両方とも 割ろう' },
+        { answers: [(pp === 0 ? '' : pp) + '±' + 2 * k + '√' + r], tag: 'formula-reduce', msg: '約分は 分子の 2つの項の 両方に。√ のほうだけ 残っていないかな' }];
+    } else {                             // x = (p ± √r)/2(x の係数が奇数)
+      const pp = R.pick([-5, -3, -1, 1, 3, 5]), r = R.pick([5, 13, 17, 21]);
+      b = -pp; c = (pp * pp - r) / 4; ans = '(' + pp + '±√' + r + ')/2';
+      mis = [{ answers: ['(' + (-pp) + '±√' + r + ')/2'], tag: 'formula-b-sign', msg: '-b の符号に注意。b = ' + b + ' だから -b = ' + (-b) },
+        { answers: [pp + '±√' + r], tag: 'formula-2a', msg: '分母の 2a(= 2)を 忘れていないかな' }];
+    }
+    const D = b * b - 4 * c;
+    return {
+      text: 'つぎの 2次方程式を解け。', expr: 'x^2' + term(b, 'x') + term(c) + ' = 0', form: 'x = □', answers: [ans], keys: ['±', '√', '分数'],
+      verify: function (v, raws) { const pv = U.parseValue(raws[0]); return !!pv.pm && pv.nums[0] < pv.nums[1] && pv.nums.every(function (x) { return Math.abs(x * x + b * x + c) < 1e-9; }); },
+      hint: '因数分解できないときは 解の公式 x = {-b ± √{b^2 - 4ac}/2a}',
+      explain: ['解の公式 x = {-b ± √{b^2 - 4ac}/2a} に a = 1, b = ' + b + ', c = ' + c + ' を代入', 'x = {' + (-b) + ' ± √{' + D + '}/2}', 'x = ' + am(ans)],
+      mistakes: U.mistakes([ans], mis)
+    };
+  }
+};
+types['ts-ineq2'] = {
+  name: '見本: 2次不等式(境界が 2±√7 の形)', level: 1,
+  gen: function (R) {
+    const pp = R.int(-3, 3), r = R.pick([2, 3, 5, 7]), kind = R.int(0, 3), sign = ['>', '≧', '<', '≦'][kind], gt = kind < 2, strict = kind % 2 === 0;
+    const a = (pp === 0 ? '' : pp) + '-√' + r, b = pp === 0 ? '√' + r : pp + '+√' + r, sol = { kind: gt ? 'outside' : 'between', eq: !strict, a: a, b: b }, B = -2 * pp, C = pp * pp - r;
+    return {
+      text: 'つぎの 2次不等式を解け。', expr: 'x^2' + term(B, 'x') + term(C) + ' ' + sign + ' 0', sol: sol, keys: ['+', '√'],
+      inside: function (x) { const val = x * x + B * x + C; return sign === '>' ? val > 0 : sign === '≧' ? val >= 0 : sign === '<' ? val < 0 : val <= 0; },
+      hint: '左辺 = 0 を 解の公式で解いて、境界の値を求めよう(小さいほうが 左)',
+      explain: ['x^2' + term(B, 'x') + term(C) + ' = 0 を解くと x = ' + am((pp === 0 ? '' : pp) + '±√' + r), 'グラフは この 2点で x軸と交わり、' + (gt ? '外側で 正' : '内側で 負'), M.sol.markup(sol)],
+      mistakes: [
+        { sol: { kind: gt ? 'between' : 'outside', a: a, b: b }, tag: 'ineq-inout', msg: '＞0 なら 2つの解の外側、＜0 なら 内側。グラフを かいて確かめよう' },
+        { sol: { kind: sol.kind, eq: strict, a: a, b: b }, tag: 'ineq-eq', msg: '等号(≦・≧)が つくかどうかを 問題の不等号で 確かめよう' },
+        { sol: { kind: sol.kind, a: b, b: a }, tag: 'ineq-order', msg: '小さいほうを 左に書こう(' + am(a) + ' のほうが 小さい)' }]
+    };
+  }
+};
+
 /* ---------- 見取り図 + すべて選ぶ ---------- */
 types['ts-skew'] = {
   name: '見本: 立方体の辺の位置関係(見取り図・すべて選ぶ)', level: 1,
@@ -300,10 +345,10 @@ const enemies = {
   neko: Object.assign({ name: 'はこひげネコ', sprite: 'neko', types: ['ts-box', 'ts-hist', 'ts-median'] }, Z),
   hotaru: Object.assign({ name: 'さんぷホタル', sprite: 'hotaru', types: ['ts-scatter'] }, Z),
   ari: Object.assign({ name: 'ならべかえアリ', sprite: 'ari', types: ['ts-order', 'ts-center'] }, Z),
-  ari2: { name: 'ふとうしきアリ', sprite: 'ari', swap: { n: 'r' }, level: 2, hp: 1, atk: 1, types: ['ts-ineq'] },
+  ari2: { name: 'ふとうしきアリ', sprite: 'ari', swap: { n: 'r' }, level: 2, hp: 1, atk: 1, types: ['ts-ineq', 'ts-ineq2', 'ts-formula'] },
   kame2: { name: 'ねじれガメ', sprite: 'kame', swap: { l: 'b', L: 'C', d: 'B' }, level: 2, hp: 1, atk: 1, types: ['ts-skew'] },
   proto: { name: '試しの番人 プロトン', sprite: 'b_proto', boss: true, level: 3, hp: 5, atk: 1.2, line: '新しい しかけ、ぜんぶ 試して いくがいい!',
-    types: ['ts-tangent', 'ts-power', 'ts-box', 'ts-hist', 'ts-median', 'ts-scatter', 'ts-center', 'ts-order', 'ts-ineq', 'ts-skew'] }
+    types: ['ts-tangent', 'ts-power', 'ts-box', 'ts-hist', 'ts-median', 'ts-scatter', 'ts-center', 'ts-order', 'ts-ineq', 'ts-ineq2', 'ts-formula', 'ts-skew'] }
 };
 const maps = {
   town: { bgm: 'town',
