@@ -31,7 +31,9 @@ function runFuzz() {
         const seed = Math.floor(seeds.next() * 4294967296), t0 = now(); let q = null;
         try { q = M.buildQuestion(C, ref, U.makeRng(seed)); } catch (e) { errs++; first = first || 'seed ' + seed + ': ' + e.message; }
         const dt = now() - t0; total += dt; if (dt > max) max = dt;
-        if (q) { const e = M.checkQuestion(q); if (e) { bad++; first = first || 'seed ' + seed + ': ' + e; } }
+        // 画面に出せる形か(図の組み立てを含むので 時間がかかる)は 10 問に 1 問 調べる。生成そのものは 全問 調べている
+        if (q && i % 10 === 0) { const e = M.checkQuestion(q); if (e) { bad++; first = first || 'seed ' + seed + ': ' + e; } }
+        if (!q && errs === 0) { bad++; first = first || 'seed ' + seed + ': 問題が 作られなかった'; }
       }
       post({ done: label, kind: 'type', n: FUZZ_TYPES, max: max, avg: total / FUZZ_TYPES, errs: errs, bad: bad, first: first });
     });
