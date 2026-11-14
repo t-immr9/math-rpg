@@ -553,7 +553,7 @@ function figScatter(f) {
 }
 /* ヒストグラム。start: 最初の階級の左はし、width: 階級の幅、freqs: 度数の列 */
 function figHist(f) {
-  const n = f.freqs.length, ay = niceAxis(0, Math.max.apply(null, f.freqs.concat([1])), 5), W = 300, H = 200, l = 34, r = 14, t = 14, b = 34;
+  const n = f.freqs.length, ay = f.max ? axisTicks(0, f.max, f.max <= 12 ? 2 : 5) : niceAxis(0, Math.max.apply(null, f.freqs.concat([1])), 5), W = 300, H = 200, l = 34, r = 14, t = 14, b = 34;
   const bw = (W - l - r) / n, Y = function (v) { return H - b - v / ay.hi * (H - t - b); };
   let out = '';
   ay.ticks.forEach(function (v) { if (v !== Math.round(v)) return; out += svgLine(l, Y(v), W - r, Y(v), { color: 'dim', w: 0.6, dash: v > 0 }) + svgText(l - 7, Y(v), figNum(v), { color: 'dim', size: 11, anchor: 'end' }); });
@@ -647,8 +647,9 @@ function judgeSol(q, inp) {
 /* どの入力の種類でも使える判定。inp は form: 文字列の列 / choice: えらんだ番号の列 / order: タップした順(もとの番号)/ ineq: { kind, eq, raws } */
 function judgeAny(q, inp) {
   const kind = q.input || 'form';
-  if (kind === 'form') return judge(q, inp);
+  if (kind === 'form' || kind === 'table') return judge(q, inp);
   if (kind === 'ineq') return judgeSol(q, inp);
+  if (kind === 'boxplot' || kind === 'hist' || kind === 'scatter') return judgeDraw(q, inp);
   if (kind === 'order') {
     if (inp.length === q.order.length && inp.every(function (x, i) { return x === i; })) return { result: 'correct' };
     const ms = q.mistakes || [];
@@ -665,14 +666,16 @@ function judgeAny(q, inp) {
 /* 正解の入力・まちがいの入力の例(テストと 動作確認に使う) */
 function correctInput(q) {
   const kind = q.input || 'form';
-  if (kind === 'form') return q.answers.slice();
+  if (kind === 'form' || kind === 'table') return q.answers.slice();
+  if (q.plot) return plotVal(q.plot).map(function (x) { return Array.isArray(x) ? x.slice() : x; });
   if (kind === 'order') return q.order.map(function (_, i) { return i; });
   if (kind === 'ineq') return { kind: q.sol.kind, eq: !!q.sol.eq, raws: [q.sol.a, q.sol.b].filter(function (x) { return x !== undefined; }) };
   const out = []; q.choice.forEach(function (c, i) { if (c.ok) out.push(i); }); return out;
 }
 function wrongInput(q) {
   const kind = q.input || 'form';
-  if (kind === 'form') { const m = (q.mistakes || [])[0]; return m ? m.answers.map(function (x, i) { return x === '*' ? q.answers[i] : x; }) : q.answers.map(function () { return '9999'; }); }
+  if (q.plot) { const c = plotVal(q.plot); return q.plot.type === 'scatter' ? c.slice(1) : q.plot.type === 'hist' ? c.map(function (x, i) { return i === 0 ? (x < histMax(q.plot) ? x + 1 : x - 1) : x; }) : c.map(function (x, i) { return i === 2 ? (x - plotStep(q.plot) >= c[1] ? fix6(x - plotStep(q.plot)) : fix6(x + plotStep(q.plot))) : x; }); }
+  if (kind === 'form' || kind === 'table') { const m = (q.mistakes || [])[0]; return m ? m.answers.map(function (x, i) { return x === '*' ? q.answers[i] : x; }) : q.answers.map(function () { return '9999'; }); }
   if (kind === 'order') return q.order.map(function (_, i) { return q.order.length - 1 - i; });
   if (kind === 'ineq') return { kind: q.sol.kind === 'none' ? 'all' : 'none', eq: false, raws: [] };
   for (let i = 0; i < q.choice.length; i++) if (!q.choice[i].ok) return [i];
@@ -682,9 +685,173 @@ function wrongInput(q) {
 function answerText(q) {
   const kind = q.input || 'form';
   if (kind === 'form') return fillForm(q.form, q.answers);
+  if (kind === 'table') return q.answers.map(answerMarkup).join(', ');
+  if (kind === 'boxplot') return q.plot.v.map(function (x, i) { return BOXN[i] + ' ' + figNum(x); }).join('、');
+  if (kind === 'hist') return '度数 ' + q.plot.freqs.join(', ');
+  if (kind === 'scatter') return q.plot.pts.map(function (pt) { return '(' + figNum(pt[0]) + ', ' + figNum(pt[1]) + ')'; }).join(' ');
   if (kind === 'ineq') return solMarkup(q.sol, q.solVar);
   if (kind === 'order') return q.order.map(function (_, i) { return KANA[q.orderShow.indexOf(i)]; }).join(' → ');
-  return q.choice.map(function (c, i) { return c.ok ? CNUM[i] + ' ' + c.text : null; }).filter(function (x) { return x; }).join('、 ');
+  return q.choice.map(function (c, i) { return c.ok ? CNUM[i] + (c.text ? ' ' + c.text : ' の図') : null; }).filter(function (x) { return x; }).join('、 ');
+}
+
+/* ===== 3d. 図をかく入力・表の空欄・図を選ぶ4択 =====
+ * plot: { type: 'boxplot', axis: [左, 右, 目盛り], step: 置ける間隔, v: [最小, Q1, 中央, Q3, 最大] }
+ *       { type: 'hist', start, width, freqs: [度数…], max: たて軸の上限 }
+ *       { type: 'scatter', xr: [左, 右, 間隔], yr: [下, 上, 間隔], pts: [[x, y], …] }
+ * table: { head: [...], rows: [[...], …] }  空欄のマスは { a: '答え' }
+ * 画面上の位置 ⇔ 値 の計算は ここにまとめ、テストからも 同じ関数で 確かめる。 */
+const BOXN = ['最小値', '第1四分位数', '中央値', '第3四分位数', '最大値'], BOXS = ['最小', 'Q1', '中央', 'Q3', '最大'];
+const DRAW = { box: { W: 300, H: 118, l: 16, r: 16, base: 84 }, hist: { W: 300, H: 236, l: 30, r: 10, t: 18, b: 30 }, sc: { W: 300, H: 300, l: 34, r: 14, t: 14, b: 34 } };
+function fix6(v) { return parseFloat(Number(v).toFixed(6)); }
+function plotStep(p) { return p.step || p.minor || p.axis[2]; }
+function plotVal(p) { return p.type === 'boxplot' ? p.v : p.type === 'hist' ? p.freqs : p.pts; }
+function histMax(p) { return p.max || 10; }
+function boxX(p, v) { const g = DRAW.box; return g.l + (v - p.axis[0]) / (p.axis[1] - p.axis[0]) * (g.W - g.l - g.r); }
+function boxHit(p, fx) {            // タップした横の位置 → いちばん近い 置ける値
+  const g = DRAW.box, st = plotStep(p), raw = p.axis[0] + (fx - g.l) / (g.W - g.l - g.r) * (p.axis[1] - p.axis[0]);
+  return fix6(Math.max(p.axis[0], Math.min(p.axis[1], p.axis[0] + Math.round((raw - p.axis[0]) / st) * st)));
+}
+function histPos(p, i, v) { const g = DRAW.hist, bw = (g.W - g.l - g.r) / p.freqs.length; return [g.l + (i + 0.5) * bw, g.H - g.b - v / histMax(p) * (g.H - g.t - g.b)]; }
+function histHit(p, fx, fy) {       // タップした位置 → { i: 階級の番号, v: 高さ }
+  const g = DRAW.hist, n = p.freqs.length, i = Math.floor((fx - g.l) / ((g.W - g.l - g.r) / n));
+  if (i < 0 || i >= n) return null;
+  return { i: i, v: Math.max(0, Math.min(histMax(p), Math.round((g.H - g.b - fy) / (g.H - g.t - g.b) * histMax(p)))) };
+}
+function scPos(p, x, y) { const g = DRAW.sc; return [g.l + (x - p.xr[0]) / (p.xr[1] - p.xr[0]) * (g.W - g.l - g.r), g.H - g.b - (y - p.yr[0]) / (p.yr[1] - p.yr[0]) * (g.H - g.t - g.b)]; }
+function scHit(p, fx, fy) {         // タップした位置 → いちばん近い 方眼の交点 [x, y](方眼の外なら null)
+  const g = DRAW.sc, nx = Math.round((p.xr[1] - p.xr[0]) / p.xr[2]), ny = Math.round((p.yr[1] - p.yr[0]) / p.yr[2]);
+  const i = Math.round((fx - g.l) / (g.W - g.l - g.r) * nx), j = Math.round((g.H - g.b - fy) / (g.H - g.t - g.b) * ny);
+  if (i < 0 || i > nx || j < 0 || j > ny) return null;
+  return [fix6(p.xr[0] + i * p.xr[2]), fix6(p.yr[0] + j * p.yr[2])];
+}
+/* かいている途中の図。val: いまの入力、act: えらんでいる値・階級 */
+function drawSVG(p, val, act) {
+  let out = '';
+  if (p.type === 'boxplot') {
+    const g = DRAW.box, lo = p.axis[0], hi = p.axis[1], st = plotStep(p), ax = axisTicks(lo, hi, p.axis[2]), nm = Math.round((hi - lo) / st);
+    out += svgLine(g.l, g.base, g.W - g.r, g.base, { color: 'dim' });
+    if (nm <= 80) for (let i = 0; i <= nm; i++) { const x = boxX(p, lo + i * st); out += svgLine(x, g.base, x, g.base + 4, { color: 'dim', w: 1 }); }
+    ax.ticks.forEach(function (t) { out += svgLine(boxX(p, t), g.base, boxX(p, t), g.base + 8, { color: 'dim' }) + svgText(boxX(p, t), g.base + 19, figNum(t), { color: 'dim', size: 11 }); });
+    if (p.unit) out += svgText(g.W - g.r, g.base + 30, p.unit, { color: 'dim', size: 11, anchor: 'end' });
+    if (val.every(function (v, i) { return v !== null && (i === 0 || v >= val[i - 1]); })) {      // 5つとも置けていて 順番も正しければ、箱を かく
+      const q = val.map(function (v) { return boxX(p, v); }), y = g.base - 28;
+      out += svgLine(q[0], y, q[1], y) + svgLine(q[3], y, q[4], y) + '<rect x="' + f1(q[1]) + '" y="' + (y - 13) + '" width="' + f1(Math.max(0, q[3] - q[1])) + '" height="26" fill="' + FIGC.fill + '"/>';
+    }
+    val.forEach(function (v, i) {
+      if (v === null) return;
+      const x = boxX(p, v), on = i === act;
+      out += svgLine(x, g.base - 46, x, g.base - 6, { color: on ? 'acc' : 'acc2', w: on ? 3 : 2 }) + svgText(Math.max(14, Math.min(g.W - 14, x)), g.base - 56 - (i % 2) * 12, BOXS[i], { color: on ? 'acc' : undefined, size: 11 });
+    });
+    return svgWrap(g.W, g.H, out);
+  }
+  if (p.type === 'hist') {
+    const g = DRAW.hist, n = p.freqs.length, mx = histMax(p), bw = (g.W - g.l - g.r) / n, Y = function (v) { return g.H - g.b - v / mx * (g.H - g.t - g.b); };
+    if (act >= 0 && act < n) out += '<rect x="' + f1(g.l + act * bw) + '" y="' + g.t + '" width="' + f1(bw) + '" height="' + (g.H - g.t - g.b) + '" fill="rgba(248,216,32,0.13)" stroke="none"/>';
+    for (let v = 0; v <= mx; v++) { out += svgLine(g.l, Y(v), g.W - g.r, Y(v), { color: 'dim', w: v % 5 === 0 ? 1 : 0.4 }); if (mx <= 10 || v % 5 === 0) out += svgText(g.l - 7, Y(v), String(v), { color: 'dim', size: 11, anchor: 'end' }); }
+    for (let i = 1; i < n; i++) out += svgLine(g.l + i * bw, g.t, g.l + i * bw, g.H - g.b, { color: 'dim', w: 0.4 });
+    val.forEach(function (v, i) { if (v > 0) out += '<rect x="' + f1(g.l + i * bw) + '" y="' + f1(Y(v)) + '" width="' + f1(bw) + '" height="' + f1(Y(0) - Y(v)) + '" fill="' + FIGC.fill + '"/>' + svgText(g.l + (i + 0.5) * bw, Y(v) - 8, String(v), { color: 'acc', size: 13 }); });
+    for (let i = 0; i <= n; i += n > 6 ? 2 : 1) out += svgText(g.l + i * bw, g.H - g.b + 12, figNum(p.start + i * p.width), { color: 'dim', size: 11 });
+    out += svgLine(g.l, g.H - g.b, g.W - g.r, g.H - g.b) + svgText(g.W - g.r, g.H - 6, p.xl || '', { size: 11, anchor: 'end' }) + svgText(g.l, 7, p.yl || '', { size: 11, anchor: 'start' });
+    return svgWrap(g.W, g.H, out);
+  }
+  const g = DRAW.sc, nx = Math.round((p.xr[1] - p.xr[0]) / p.xr[2]), ny = Math.round((p.yr[1] - p.yr[0]) / p.yr[2]);
+  for (let i = 0; i <= nx; i++) { const q = scPos(p, p.xr[0] + i * p.xr[2], p.yr[0]); out += svgLine(q[0], g.t, q[0], g.H - g.b, { color: 'dim', w: 0.5 }) + svgText(q[0], g.H - g.b + 13, figNum(p.xr[0] + i * p.xr[2]), { color: 'dim', size: 11 }); }
+  for (let j = 0; j <= ny; j++) { const q = scPos(p, p.xr[0], p.yr[0] + j * p.yr[2]); out += svgLine(g.l, q[1], g.W - g.r, q[1], { color: 'dim', w: 0.5 }) + svgText(g.l - 8, q[1], figNum(p.yr[0] + j * p.yr[2]), { color: 'dim', size: 11, anchor: 'end' }); }
+  out += '<rect x="' + g.l + '" y="' + g.t + '" width="' + (g.W - g.l - g.r) + '" height="' + (g.H - g.t - g.b) + '" stroke="' + FIGC.dim + '"/>';
+  val.forEach(function (pt) { const q = scPos(p, pt[0], pt[1]); out += '<circle cx="' + f1(q[0]) + '" cy="' + f1(q[1]) + '" r="7" fill="' + FIGC.acc + '" stroke="#000" stroke-width="1.5"/>'; });
+  out += svgText((g.l + g.W - g.r) / 2, g.H - 7, p.xl || 'x', { size: 12 }) + svgText(11, g.t + 5, p.yl || 'y', { size: 12 });
+  return svgWrap(g.W, g.H, out);
+}
+/* 値から「できあがった図」のデータを作る(正しい図の表示・図を選ぶ4択に使う) */
+function plotFig(p, val) {
+  if (p.type === 'boxplot') { const st = plotStep(p); return { type: 'boxplot', rows: [{ v: val }], axis: p.axis, minor: st !== p.axis[2] && (p.axis[1] - p.axis[0]) / st <= 60 ? st : undefined, unit: p.unit }; }
+  if (p.type === 'hist') return { type: 'hist', start: p.start, width: p.width, freqs: val, xl: p.xl, yl: p.yl, max: histMax(p) };
+  return { type: 'scatter', pts: val, xr: p.xr, yr: p.yr, xl: p.xl, yl: p.yl };
+}
+function answerFig(q) {
+  if (q.plot) return plotFig(q.plot, plotVal(q.plot));
+  if (q.input === 'choice' && !q.multi) { const c = q.choice.filter(function (x) { return x.ok; })[0]; return c && c.fig ? c.fig : null; }
+  return null;
+}
+function ptKey(pts) { return pts.map(function (pt) { return fix6(pt[0]) + ',' + fix6(pt[1]); }).sort().join(' '); }
+function sameDraw(p, a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (p.type === 'scatter') return ptKey(a) === ptKey(b);
+  return a.length === b.length && a.every(function (x, i) { return typeof x === 'number' && Math.abs(x - b[i]) < 1e-9; });
+}
+/* かいた図の判定。まちがいの種類も 自動で見分ける(コースの mistakes が 先) */
+function judgeDraw(q, inp) {
+  const p = q.plot, right = plotVal(p), ms = q.mistakes || [];
+  if (!Array.isArray(inp)) return { result: 'invalid', index: 0 };
+  if (p.type === 'boxplot') { for (let i = 0; i < 5; i++) if (typeof inp[i] !== 'number' || !isFinite(inp[i])) return { result: 'invalid', index: i }; }
+  if (p.type === 'hist' && (inp.length !== right.length || inp.some(function (x) { return typeof x !== 'number' || x < 0; }))) return { result: 'invalid', index: 0 };
+  if (p.type === 'scatter' && inp.some(function (pt) { return !Array.isArray(pt) || pt.length !== 2; })) return { result: 'invalid', index: 0 };
+  if (sameDraw(p, inp, right)) return { result: 'correct' };
+  for (let i = 0; i < ms.length; i++) { const mv = ms[i].v || ms[i].freqs || ms[i].pts; if (mv && sameDraw(p, inp, mv)) return { result: 'wrong', mistake: ms[i] }; }
+  if (p.type === 'boxplot') {
+    if (!inp.every(function (v, i) { return i === 0 || v >= inp[i - 1]; })) return { result: 'wrong', mistake: { tag: 'box-order', msg: '最小値 ≦ 第1四分位数 ≦ 中央値 ≦ 第3四分位数 ≦ 最大値 の順に ならないと おかしいよ' } };
+    const bad = []; inp.forEach(function (v, i) { if (Math.abs(v - right[i]) > 1e-9) bad.push(i); });
+    return { result: 'wrong', mistake: { tag: 'box-' + ['min', 'q1', 'med', 'q3', 'max'][bad[0]], msg: bad.map(function (i) { return BOXN[i]; }).join('・') + ' の位置が ちがうよ。' +
+      (bad.indexOf(1) >= 0 || bad.indexOf(3) >= 0 ? '四分位数は、データを 半分に分けて、それぞれの中央値を とろう' : bad.indexOf(2) >= 0 ? '中央値は、小さい順に並べたときの まん中の値' : 'データを 小さい順に並べて、はしの値を 確かめよう') } };
+  }
+  if (p.type === 'hist') {
+    const n = right.length, tot = right.reduce(function (a, b) { return a + b; }, 0), sum = inp.reduce(function (a, b) { return a + b; }, 0);
+    if (n > 1 && (inp.every(function (v, i) { return v === (i === 0 ? 0 : right[i - 1]); }) || inp.every(function (v, i) { return v === (i === n - 1 ? 0 : right[i + 1]); }))) return { result: 'wrong', mistake: { tag: 'hist-shift', msg: '柱が 階級 1つぶん ずれているよ。横軸の目盛りを 確かめよう' } };
+    if (sum !== tot) return { result: 'wrong', mistake: { tag: 'hist-total', msg: '柱の高さの合計が ' + sum + ' になっているよ(度数の合計は ' + tot + ')。もう一度 表と 見くらべよう' } };
+    const i = inp.findIndex(function (v, k) { return v !== right[k]; });
+    return { result: 'wrong', mistake: { tag: 'hist-class', msg: figNum(p.start + i * p.width) + ' 以上 ' + figNum(p.start + (i + 1) * p.width) + ' 未満の階級の高さが ちがうよ' } };
+  }
+  if (ptKey(inp.map(function (pt) { return [pt[1], pt[0]]; })) === ptKey(right)) return { result: 'wrong', mistake: { tag: 'scatter-swap', msg: 'x と y が 逆だよ。横軸が x、たて軸が y' } };
+  if (inp.length !== right.length) return { result: 'wrong', mistake: { tag: 'scatter-count', msg: '点の数が ちがうよ(データは ' + right.length + ' 組、置いた点は ' + inp.length + ' 個)' } };
+  const rk = ptKey(right).split(' '), miss = inp.filter(function (pt) { return rk.indexOf(fix6(pt[0]) + ',' + fix6(pt[1])) < 0; }).length;
+  return { result: 'wrong', mistake: { tag: 'scatter-point', msg: miss + ' 個の点の位置が ちがうよ。目盛りを 読み直そう' } };
+}
+/* 図を選ぶ4択の まちがいの図を 自動で作る(コースの mistakes に 図のデータがあれば そちらを先に使う) */
+function autoAlts(p, R) {
+  const c = plotVal(p), out = [];
+  if (p.type === 'boxplot') {
+    const st = plotStep(p), add = function (d) { const v = c.map(function (x, i) { return fix6(x + d[i] * st); }); if (v.every(function (x, i) { return x >= p.axis[0] && x <= p.axis[1] && (i === 0 || x >= v[i - 1]); })) out.push(v); };
+    [[0, 1, 0, 0, 0], [0, -1, 0, 0, 0], [0, 0, 0, 1, 0], [0, 0, 0, -1, 0], [0, 0, 1, 0, 0], [0, 0, -1, 0, 0], [0, 1, 0, -1, 0], [0, -1, 0, 1, 0], [0, 2, 0, 0, 0], [0, 0, 0, -2, 0], [0, 1, 1, 0, 0], [0, 0, -1, -1, 0]].forEach(add);
+  } else if (p.type === 'hist') {
+    const n = c.length; out.push([c[n - 1]].concat(c.slice(0, n - 1)), c.slice(1).concat([c[0]]), c.slice().reverse());
+    for (let i = 0; i + 1 < n; i++) { if (c[i] !== c[i + 1]) { const v = c.slice(); v[i] = c[i + 1]; v[i + 1] = c[i]; out.push(v); } if (c[i] > 0 && c[i + 1] < histMax(p)) { const v = c.slice(); v[i]--; v[i + 1]++; out.push(v); } }
+  } else {
+    const inR = function (pts) { return pts.every(function (pt) { return scHitOn(p, pt); }); };
+    [c.map(function (pt) { return [pt[1], pt[0]]; }), c.map(function (pt) { return [fix6(p.xr[0] + p.xr[1] - pt[0]), pt[1]]; }), c.map(function (pt) { return [pt[0], fix6(p.yr[0] + p.yr[1] - pt[1])]; }),
+      c.map(function (pt) { return [fix6(p.xr[0] + p.xr[1] - pt[0]), fix6(p.yr[0] + p.yr[1] - pt[1])]; }), c.map(function (pt, i) { return i === 0 ? [pt[0], fix6(pt[1] + (pt[1] + p.yr[2] <= p.yr[1] ? p.yr[2] : -p.yr[2]))] : pt; })]
+      .forEach(function (v) { if (inR(v) && new Set(ptKey(v).split(' ')).size === v.length) out.push(v); });
+  }
+  const seen = {}, res = [];
+  R.shuffle(out).forEach(function (v) { const k = p.type === 'scatter' ? ptKey(v) : v.join(','); if (!seen[k] && !sameDraw(p, v, c)) { seen[k] = 1; res.push(v); } });
+  return res;
+}
+function scHitOn(p, pt) {           // その点が 方眼の交点の上に あるか
+  const i = (pt[0] - p.xr[0]) / p.xr[2], j = (pt[1] - p.yr[0]) / p.yr[2];
+  return Math.abs(i - Math.round(i)) < 1e-9 && Math.abs(j - Math.round(j)) < 1e-9 && pt[0] >= p.xr[0] - 1e-9 && pt[0] <= p.xr[1] + 1e-9 && pt[1] >= p.yr[0] - 1e-9 && pt[1] <= p.yr[1] + 1e-9;
+}
+/* 図をかく問題を「図を選ぶ4択」に 作りかえる(作れなければ null) */
+function asFigChoice(q, R) {
+  const p = q.plot; if (!p) return null;
+  const c = plotVal(p), seen = {}, wrong = [], kf = function (v) { return p.type === 'scatter' ? ptKey(v) : v.join(','); };
+  (q.mistakes || []).forEach(function (m) { const v = m.v || m.freqs || m.pts; if (v && !sameDraw(p, v, c) && !seen[kf(v)] && wrong.length < 3) { seen[kf(v)] = 1; wrong.push({ fig: plotFig(p, v), tag: m.tag, msg: m.msg }); } });
+  autoAlts(p, R).forEach(function (v) { if (!seen[kf(v)] && wrong.length < 3) { seen[kf(v)] = 1; wrong.push({ fig: plotFig(p, v), tag: 'fig-wrong', msg: 'その図は データと 合わないよ。値を 1つずつ 図と 照らし合わせよう' }); } });
+  if (wrong.length < 3) return null;
+  const q2 = Object.assign({}, q), items = [{ fig: plotFig(p, c), ok: true }].concat(wrong.map(function (w) { w.ok = false; return w; }));
+  delete q2.plot;
+  q2.text = q.text + '\n(正しい図を 1つ 選ぼう)'; q2.choice = R.shuffle(items); q2.input = 'choice'; q2.multi = false; q2.cols = p.type === 'boxplot' ? 1 : 2; q2.mistakes = []; q2.fromDraw = true;
+  return q2;
+}
+/* 表(HTML)。mode: 'input' = 空欄を 入力できるマスにする / 'answer' = 正解を入れて表示 */
+function tableBlanks(t) { const out = []; (t.rows || []).forEach(function (r) { r.forEach(function (c) { if (c && typeof c === 'object') out.push(String(c.a)); }); }); return out; }
+function tableHTML(t, mode) {
+  let k = 0;
+  const row = function (r, head) {
+    return '<tr>' + r.map(function (c) {
+      if (c && typeof c === 'object') { const i = k++; return '<td class="tb">' + (mode === 'answer' ? '<b>' + mathHTML(answerMarkup(String(c.a))) + '</b>' : '<span class="blank" data-i="' + i + '"></span>') + '</td>'; }
+      return (head ? '<th>' : '<td>') + mathHTML(String(c)) + (head ? '</th>' : '</td>');
+    }).join('') + '</tr>';
+  };
+  return '<table class="tbl">' + (t.head ? row(t.head, true) : '') + t.rows.map(function (r) { return row(r, false); }).join('') + '</table>';
 }
 
 /* ===== 4. ダンジョン生成 ===== */
@@ -885,6 +1052,8 @@ function buildQuestion(course, ref, R) {
     if (perm.length > 1 && perm.every(function (x, i) { return x === i; })) perm.push(perm.shift());       // どうしても そろってしまうときは 1つ ずらす
     q.orderShow = perm; q.input = 'order';                                                           // orderShow[画面の位置] = もとの番号
   } else if (q.sol) q.input = 'ineq';
+  else if (q.plot) q.input = q.plot.type;                    // boxplot / hist / scatter(図をかく)
+  else if (q.table) { q.input = 'table'; q.answers = tableBlanks(q.table); }      // 表の空欄(答えは 表の { a: … } から 集める)
   else q.input = 'form';
   return q;
 }
@@ -904,10 +1073,10 @@ function checkQuestion(q) {
     } else if (kind === 'choice') {
       const it = q.choice;
       if (!Array.isArray(it) || it.length < 2 || it.length > CNUM.length) return '選択肢は 2〜12 個';
-      if (!it.every(function (c) { return c && typeof c.text === 'string' && c.text.length; })) return '選択肢の文が ない';
-      if (new Set(it.map(function (c) { return c.text; })).size !== it.length) return '同じ選択肢が ある';
+      if (!it.every(function (c) { return c && ((typeof c.text === 'string' && c.text.length) || c.fig); })) return '選択肢の文(または 図)が ない';
+      if (new Set(it.map(function (c) { return (c.text || '') + (c.fig ? JSON.stringify(c.fig) : ''); })).size !== it.length) return '同じ選択肢が ある';
       if (!it.some(function (c) { return c.ok; }) || it.every(function (c) { return c.ok; })) return '正解と 不正解の選択肢が それぞれ 1つ以上 必要';
-      it.forEach(function (c) { mathHTML(c.text); if (c.msg) mathHTML(c.msg); });
+      it.forEach(function (c) { if (c.text) mathHTML(c.text); if (c.fig) figureSVG(c.fig); if (c.msg) mathHTML(c.msg); });
     } else if (kind === 'order') {
       const n = Array.isArray(q.order) ? q.order.length : 0;
       if (n < 3 || n > KANA.length) return '並べ替えは 3〜8 個';
@@ -923,9 +1092,40 @@ function checkQuestion(q) {
       if (n === 2 && !(vals[0].num < vals[1].num)) return '不等式の答えは a < b の順に書く';
       if (q.shapes && (q.shapes.indexOf(sl.kind) < 0 || !q.shapes.every(function (k) { return SHAPES[k] !== undefined; }))) return 'shapes に 正解の形が ない';
       for (let i = 0; i < q.mistakes.length; i++) if (!q.mistakes[i].sol || SHAPES[q.mistakes[i].sol.kind] === undefined) return '誤答の sol が おかしい';
+    } else if (kind === 'table') {
+      const t = q.table;
+      if (!t || !Array.isArray(t.rows) || !t.rows.length) return '表の rows がない';
+      const w = (t.head || t.rows[0]).length;
+      if (w < 1 || w > 7 || !t.rows.every(function (r) { return Array.isArray(r) && r.length === w; })) return '表の列の数が そろっていない(7列まで)';
+      if (!Array.isArray(q.answers) || q.answers.length < 1 || q.answers.length > 12) return '表の空欄は 1〜12 個';
+      if (!q.answers.every(function (a) { const v = parseValue(a); return v && !v.sym; })) return '表の空欄の答えの書き方が 正しくない';
+      tableHTML(t, 'input'); tableHTML(t, 'answer');
+      for (let i = 0; i < q.mistakes.length; i++) if (!Array.isArray(q.mistakes[i].answers) || q.mistakes[i].answers.length !== q.answers.length) return '誤答の answers の数が 合わない';
+    } else if (kind === 'boxplot' || kind === 'hist' || kind === 'scatter') {
+      const pl = q.plot, isNum = function (x) { return typeof x === 'number' && isFinite(x); };
+      if (!pl || pl.type !== kind) return 'plot の種類が ちがう';
+      if (kind === 'boxplot') {
+        const st = plotStep(pl);
+        if (!Array.isArray(pl.axis) || !pl.axis.every(isNum) || !(pl.axis[1] > pl.axis[0]) || !(pl.axis[2] > 0) || !(st > 0)) return '箱ひげ図の axis・step が 正しくない';
+        if ((pl.axis[1] - pl.axis[0]) / st > 60) return '箱ひげ図の 置ける位置が 多すぎる(60 以下に)';
+        if (!Array.isArray(pl.v) || pl.v.length !== 5 || !pl.v.every(isNum) || !pl.v.every(function (x, i) { return i === 0 || x >= pl.v[i - 1]; })) return '箱ひげ図の v は [最小, Q1, 中央, Q3, 最大] の順';
+        if (!pl.v.every(function (x) { return Math.abs(boxHit(pl, boxX(pl, x)) - x) < 1e-9; })) return '箱ひげ図の値が 置ける位置(step の倍数・axis の中)に ない';
+      } else if (kind === 'hist') {
+        if (!Array.isArray(pl.freqs) || pl.freqs.length < 2 || pl.freqs.length > 8 || !pl.freqs.every(function (x) { return Number.isInteger(x) && x >= 0; })) return 'ヒストグラムの freqs は 0 以上の整数を 2〜8 個';
+        if (!(histMax(pl) <= 20) || Math.max.apply(null, pl.freqs) > histMax(pl) || !pl.freqs.some(function (x) { return x > 0; })) return 'ヒストグラムの max が 合わない(度数の最大以上・20 以下)';
+        if (!isNum(pl.start) || !(pl.width > 0)) return 'ヒストグラムの start・width が 正しくない';
+      } else {
+        const okR = function (r) { return Array.isArray(r) && r.every(isNum) && r[1] > r[0] && r[2] > 0 && Math.abs((r[1] - r[0]) / r[2] - Math.round((r[1] - r[0]) / r[2])) < 1e-9 && (r[1] - r[0]) / r[2] <= 10; };
+        if (!okR(pl.xr) || !okR(pl.yr)) return '散布図の xr・yr が 正しくない(方眼は たて横とも 10 マスまで)';
+        if (!Array.isArray(pl.pts) || pl.pts.length < 1 || pl.pts.length > 15 || !pl.pts.every(function (pt) { return Array.isArray(pt) && pt.length === 2 && scHitOn(pl, pt); })) return '散布図の点が 方眼の交点に ない(1〜15 個)';
+        if (new Set(ptKey(pl.pts).split(' ')).size !== pl.pts.length) return '散布図に 同じ点が 2つ ある';
+      }
+      drawSVG(pl, kind === 'boxplot' ? [null, null, null, null, null] : kind === 'hist' ? pl.freqs.map(function () { return 0; }) : [], 0); drawSVG(pl, plotVal(pl), 0);
+      for (let i = 0; i < q.mistakes.length; i++) { const mv = q.mistakes[i].v || q.mistakes[i].freqs || q.mistakes[i].pts; if (!Array.isArray(mv)) return '誤答に 図のデータ(v・freqs・pts)が ない'; figureSVG(plotFig(pl, mv)); }
     } else return '入力の種類が ちがう: ' + kind;
     mathHTML(q.text); if (q.expr !== undefined) mathHTML(q.expr); mathHTML(q.hint); mathHTML(answerText(q));
     if (q.fig) figureSVG(q.fig);
+    const af = answerFig(q); if (af) figureSVG(af);
     q.explain.forEach(function (l) { mathHTML(l); });
     q.mistakes.forEach(function (m) { mathHTML(m.msg); });
   } catch (e) { return e.message; }
@@ -1071,6 +1271,7 @@ M.checkQuestion = checkQuestion; M.safeQuestion = safeQuestion;
 M.figure = { svg: figureSVG, niceAxis: niceAxis }; M.geo = geo; M.solids = solids;
 M.judgeAny = judgeAny; M.correctInput = correctInput; M.wrongInput = wrongInput; M.answerText = answerText;
 M.sol = { markup: solMarkup, contains: solContains, shapes: SHAPE_ORDER };
+M.draw = { geom: DRAW, svg: drawSVG, boxX: boxX, boxHit: boxHit, histPos: histPos, histHit: histHit, scPos: scPos, scHit: scHit, plotFig: plotFig, answerFig: answerFig, asFigChoice: asFigChoice, autoAlts: autoAlts, tableHTML: tableHTML, step: plotStep, histMax: histMax };
 M.path = { find: findPath }; M.MOVE_MS = MOVE_MS;
 M.rules = rules; M.JOBS = JOBS; M.buildQuestion = buildQuestion; M.bossIds = bossIds;
 M.password = { encode: pwEncode, decode: pwDecode, alphabet: PW };
@@ -1082,7 +1283,7 @@ M.BASE_LEGEND = {
 M.newState = function (c) {
   return { v: 1, name: c.name, gender: c.gender ? 1 : 0, job: c.job, lv: 1, xp: 0, hp: rules.maxHp(1, c.job), gold: 20, items: { herb: 3, bell: 0 },
     flags: {}, titles: [], title: null, pos: null, dun: null, combo: 0, review: [],
-    stats: { battles: 0, correct: 0, wrong: 0, maxCombo: 0, mistakes: {}, types: {} }, days: { last: '', streak: 0 }, sound: false, dpad: false };
+    stats: { battles: 0, correct: 0, wrong: 0, maxCombo: 0, mistakes: {}, types: {} }, days: { last: '', streak: 0 }, sound: false, dpad: false, figChoice: false };
 };
 
 /* ===== 8. ブラウザ部 ===== */
@@ -1663,14 +1864,15 @@ M.start = function (courseId, mount) {
   }
   async function openMenu() {
     for (;;) {
-      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '十字キー:' + (S.dpad ? 'オン' : 'オフ'), '記録のことば', '町へ もどる', 'とじる'],
+      const c = await choose(['つよさ・称号', 'どうぐ', '音:' + (soundOn ? 'オン' : 'オフ'), '十字キー:' + (S.dpad ? 'オン' : 'オフ'), '図の問題:' + (S.figChoice ? 'えらぶ' : 'かく'), '記録のことば', '町へ もどる', 'とじる'],
         { cols: 2, prompt: 'メニュー(歩く:マップをタップ)' });
       if (c === 0) await statusScreen();
       else if (c === 1) { if (await itemMenu(false) === 'bell') break; }
       else if (c === 2) setSound(!soundOn);
       else if (c === 3) { setPad(!S.dpad); save(); }
-      else if (c === 4) await passwordShow();
-      else if (c === 5) {
+      else if (c === 4) { S.figChoice = !S.figChoice; save(); }                // 図をかく問題を「かく」か「4つの図から えらぶ」か
+      else if (c === 5) await passwordShow();
+      else if (c === 6) {
         if (await choose(['町へ もどる', 'やめる'], { cols: 2, prompt: '町へ もどりますか?\n(ゴールドや道具は へりません。ダンジョンは 入り直しに なります)' }) === 0) {
           S.dun = null; S.pos = Object.assign({}, course.start); loadMap(); save(); sfx('stairs'); await say('町へ もどった。'); break;
         }
@@ -1734,12 +1936,16 @@ M.start = function (courseId, mount) {
       function setCells(n) { cells = []; for (let i = 0; i < n; i++) cells.push({ num: '', den: null, part: 'num' }); act = 0; }
       function fillCells(raws) { raws.forEach(function (rw, i) { if (!cells[i]) return; const pf = /^\((.+)\)\/(.+)$/.exec(String(rw)), p = pf ? [pf[1], pf[2]] : String(rw).split('/'); cells[i].num = p[0]; cells[i].den = p.length > 1 ? p[1] : null; cells[i].part = 'num'; }); }
       if (kind === 'form') { setCells(countBlanks(q.form)); if (prefill) fillCells(prefill); }
+      if (kind === 'table') setCells(q.answers.length);
+      /* 図をかく入力: dv = いまの入力(箱ひげ図は 5つの値、ヒストグラムは 柱の高さ、散布図は 点の列)、dact = えらんでいる値・階級 */
+      const PL = q.plot, isDraw = kind === 'boxplot' || kind === 'hist' || kind === 'scatter';
+      let dv = kind === 'boxplot' ? [null, null, null, null, null] : kind === 'hist' ? PL.freqs.map(function () { return 0; }) : [], dact = 0;
       mount.classList.toggle('roomy', !!q.fig || kind !== 'form');      // 図・選択肢のある問題は、小さい画面では 敵の絵をたたんで 問題欄を広くする(CSS)
       function raw(c) { return c.den !== null ? (hasOp(c.num) ? '(' + c.num + ')' : c.num) + '/' + c.den : c.num; }      // 分子が 和・差のときは かっこで囲む
       function body() {
         if (kind === 'choice') {
           return '<div class="qs">' + (q.multi ? 'あてはまるものを すべて えらんで「けってい」' : '1つ えらんで「けってい」') + '</div><div class="opts' + (q.cols ? ' c' + q.cols : '') + '">' + q.choice.map(function (c, i) {
-            return '<button class="opt' + (picked.indexOf(i) >= 0 ? ' sel' : '') + '" data-o="' + i + '"><b>' + CNUM[i] + '</b><span>' + mathHTML(c.text) + '</span></button>';
+            return '<button class="opt' + (c.fig ? ' figopt' : '') + (picked.indexOf(i) >= 0 ? ' sel' : '') + '" data-o="' + i + '"><b>' + CNUM[i] + '</b><span>' + (c.fig ? figureSVG(c.fig) : '') + (c.text ? mathHTML(c.text) : '') + '</span></button>';
           }).join('') + '</div>';
         }
         if (kind === 'order') {
@@ -1754,7 +1960,41 @@ M.start = function (courseId, mount) {
             return '<button class="shape' + (k === shape ? ' sel' : '') + '" data-s="' + k + '">' + mathHTML(shapeMarkup(k, false, vn, '□', '□')) + '</button>';
           }).join('') + '</div>' + (shape ? '<div class="qf">' + mathHTML(shapeMarkup(shape, eq, vn, '□', '□'), true) + '</div>' : '');
         }
+        if (kind === 'table') return '<div class="qs">表の空欄を タップして、数を入れる</div><div class="qf qtbl">' + tableHTML(q.table, 'input') + '</div>';
+        if (kind === 'boxplot') {
+          return '<div class="qs">値のボタンを えらんでから、数直線を タップして 位置を決める(◀ ▶ で 1目盛りずつ 動かせる)</div><div class="bfields">' + BOXS.map(function (nm, i) {
+            return '<button class="bf' + (i === dact ? ' sel' : '') + '" data-bf="' + i + '"><small>' + nm + '</small><b>' + (dv[i] === null ? '—' : figNum(dv[i])) + '</b></button>';
+          }).join('') + '</div><div class="draw">' + drawSVG(PL, dv, dact) + '</div>';
+        }
+        if (kind === 'hist') return '<div class="qs">階級ごとに、度数に合う高さを タップする(▲ ▼ で 1ずつ 直せる。0 にするときは いちばん下)</div><div class="draw">' + drawSVG(PL, dv, dact) + '</div>';
+        if (kind === 'scatter') {
+          return '<div class="qs">方眼の交点を タップして 点を置く(もう一度タップすると 消える)</div><div class="draw">' + drawSVG(PL, dv, -1) + '</div><div class="qs">置いた点 ' + dv.length + ' 個' +
+            (dv.length ? ':' + dv.map(function (pt) { return '(' + figNum(pt[0]) + ', ' + figNum(pt[1]) + ')'; }).join(' ') : '') + '</div>';
+        }
         return '<div class="qf">' + mathHTML(q.form, true) + '</div>';
+      }
+      /* 図の上のタップ(fx, fy は 図の座標) */
+      function tap(fx, fy) {
+        if (kind === 'boxplot') dv[dact] = boxHit(PL, fx);
+        else if (kind === 'hist') { const hh = histHit(PL, fx, fy); if (!hh) return; dv[hh.i] = hh.v; dact = hh.i; }
+        else if (kind === 'scatter') {
+          const pt = scHit(PL, fx, fy); if (!pt) return;
+          const k = dv.findIndex(function (o) { return o[0] === pt[0] && o[1] === pt[1]; });
+          if (k >= 0) dv.splice(k, 1); else if (dv.length < 20) dv.push(pt);
+        } else return;
+        note = ''; sfx('cursor'); render();
+      }
+      function drawKey(k) {
+        if (kind === 'boxplot') {
+          const st = plotStep(PL);
+          if (k === 'nextf') dact = (dact + 1) % 5; else if (k === 'clr') dv[dact] = null;
+          else if (dv[dact] === null) note = '先に 数直線を タップして、位置を決めよう';
+          else dv[dact] = fix6(Math.max(PL.axis[0], Math.min(PL.axis[1], dv[dact] + (k === 'inc' ? st : -st))));
+        } else if (kind === 'hist') {
+          const n = dv.length;
+          if (k === 'nextf') dact = (dact + 1) % n; else if (k === 'prevf') dact = (dact + n - 1) % n;
+          else dv[dact] = Math.max(0, Math.min(histMax(PL), dv[dact] + (k === 'inc' ? 1 : -1)));
+        } else if (k === 'clrall') dv = [];
       }
       function render() {
         const st = msgEl.scrollTop;
@@ -1785,7 +2025,9 @@ M.start = function (courseId, mount) {
       }
       function setShape(k) { if (kind !== 'ineq' || shapes.indexOf(k) < 0) return; shape = k; setCells(SHAPES[k]); note = ''; sfx('cursor'); render(); }
       msgEl.onclick = function (e) {
-        const o = e.target.closest('.opt'), sh = e.target.closest('.shape'), bl = e.target.closest('.blank');
+        const o = e.target.closest('.opt'), sh = e.target.closest('.shape'), bl = e.target.closest('.blank'), bf = e.target.closest('.bf'), dr = e.target.closest('.draw');
+        if (bf) { dact = parseInt(bf.getAttribute('data-bf'), 10); note = ''; sfx('cursor'); return render(); }
+        if (dr && isDraw) { const sv = dr.querySelector('svg'), r = sv.getBoundingClientRect(), vb = sv.viewBox.baseVal; return tap((e.clientX - r.left) / r.width * vb.width, (e.clientY - r.top) / r.height * vb.height); }
         if (o) return pick(parseInt(o.getAttribute('data-o'), 10));
         if (sh) return setShape(sh.getAttribute('data-s'));
         if (!bl || !bl.closest('.qf')) return;
@@ -1797,12 +2039,19 @@ M.start = function (courseId, mount) {
       function submit() {
         if (kind === 'choice') { if (!picked.length) { note = 'えらんでから 決定しよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
         if (kind === 'order') { if (picked.length < q.order.length) { note = 'すべてを 順に タップしよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
+        if (kind === 'boxplot') {
+          const k0 = dv.indexOf(null);
+          if (k0 >= 0) { dact = k0; note = 'まだ 置いていない値が あるよ(' + BOXN[k0] + ')'; return render(); }
+          return finish({ judge: judgeAny(q, dv.slice()) });
+        }
+        if (kind === 'hist') { if (dv.every(function (x) { return x === 0; })) { note = 'まだ 柱を かいていないよ'; return render(); } return finish({ judge: judgeAny(q, dv.slice()) }); }
+        if (kind === 'scatter') { if (!dv.length) { note = 'まだ 点を 置いていないよ'; return render(); } return finish({ judge: judgeAny(q, dv.map(function (pt) { return pt.slice(); })) }); }
         if (kind === 'ineq' && !shape) { note = '先に 答えの形を えらぼう'; return render(); }
         for (let i = 0; i < cells.length; i++) {
           const cc = cells[i];
           if (cc.num === '' || (cc.num === '-' && cc.den !== null) || cc.den === '') { act = i; cc.part = cc.num === '' || cc.num === '-' ? 'num' : 'den'; note = 'あいている ところが あるよ'; return render(); }
         }
-        const raws = cells.map(raw), j = judgeAny(q, kind === 'form' ? raws : { kind: shape, eq: eq, raws: raws });
+        const raws = cells.map(raw), j = judgeAny(q, kind === 'ineq' ? { kind: shape, eq: eq, raws: raws } : raws);
         if (j.result === 'invalid') { act = Math.min(j.index, Math.max(0, cells.length - 1)); note = '書き方を たしかめよう(例:2√3、5π、0.5、− は先頭)'; return render(); }
         if (j.result === 'unsimplified') { note = '値は 合っている! 約分・有理化して、最も簡単な形に 直そう'; sfx('cursor'); return render(); }
         return finish({ judge: j });
@@ -1819,6 +2068,7 @@ M.start = function (courseId, mount) {
         }
         if (k === 'undo') { picked.pop(); sfx('cursor'); return render(); }
         if (kind === 'choice' || kind === 'order') return;
+        if (isDraw) { drawKey(k); sfx('cursor'); return render(); }
         if (k === '≦') { if (kind === 'ineq') eq = !eq; sfx('cursor'); return render(); }
         const c = cells[act];
         if (!c) { if (kind === 'ineq' && !shape) note = '先に 答えの形を えらぼう'; return render(); }
@@ -1843,7 +2093,10 @@ M.start = function (courseId, mount) {
       let h = '';
       if (kind === 'choice' || kind === 'order') {
         if (kind === 'order') h += '<button class="k f wide" data-k="undo">' + KEYLABEL.undo + '</button>';
-      } else {
+      } else if (kind === 'boxplot') h += kb('dec', 'f tall', '◀ 小さく') + kb('inc', 'f tall', '大きく ▶') + kb('nextf', 'f tall', 'つぎの値') + kb('clr', 'f tall', 'けす');
+      else if (kind === 'hist') h += kb('prevf', 'f tall', '◀ 前の階級') + kb('dec', 'f tall', '▼ 1 へらす') + kb('inc', 'f tall', '▲ 1 ふやす') + kb('nextf', 'f tall', '次の階級 ▶');
+      else if (kind === 'scatter') h += '<button class="k f wide tall" data-k="clrall">ぜんぶ 消す</button>';
+      else {
         const ex = (kind === 'ineq' ? ['≦'] : []).concat(q.keys).slice(0, 4);
         [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['-', '0', '⌫']].forEach(function (r, i) {
           r.forEach(function (k) { h += kb(k); });
@@ -1865,9 +2118,9 @@ M.start = function (courseId, mount) {
         return true;
       },
       /* 動作確認用(&debug=): 画面の部品を 直接 操作する */
-      dev: { pick: pick, shape: setShape, fill: function () {
+      dev: { pick: pick, shape: setShape, tap: tap, field: function (i) { dact = i; render(); }, fill: function () {
         const ci = correctInput(q);
-        if (kind === 'choice' || kind === 'order') picked = ci.slice(); else if (kind === 'ineq') { shape = ci.kind; eq = ci.eq; setCells(SHAPES[shape]); fillCells(ci.raws); } else fillCells(ci);
+        if (isDraw) dv = ci; else if (kind === 'choice' || kind === 'order') picked = ci.slice(); else if (kind === 'ineq') { shape = ci.kind; eq = ci.eq; setCells(SHAPES[shape]); fillCells(ci.raws); } else fillCells(ci);
         render();
       } } };
       render();
@@ -1875,7 +2128,9 @@ M.start = function (courseId, mount) {
   }
   function showExplain(q) {
     return new Promise(function (res) {
-      showMsg('<div class="ex"><div class="exa">こたえ <span class="exf">' + mathHTML(answerText(q)) + '</span></div>' +
+      const af = answerFig(q), isT = q.input === 'table';
+      showMsg('<div class="ex"><div class="exa">' + (q.plot ? 'こたえ(正しい図)' : isT ? 'こたえ(正しい表)' : 'こたえ <span class="exf">' + mathHTML(answerText(q)) + '</span>') + '</div>' +
+        (af ? '<div class="qfig">' + figureSVG(af) + '</div>' : '') + (isT ? '<div class="qtbl">' + tableHTML(q.table, 'answer') + '</div>' : '') +
         q.explain.map(function (l) { return '<div class="exl">' + mathHTML(l) + '</div>'; }).join('') + '</div><span class="more">▼</span>');
       msgEl.classList.add('done');
       const at = Date.now(), go = function () { if (Date.now() - at < 500) return; modal = null; msgEl.classList.remove('done'); res(); };
@@ -1906,8 +2161,9 @@ M.start = function (courseId, mount) {
     let result = null;
     while (!result) {
       bt.turn++;
-      const q = safeQuestion(course, bt.phase === 2 && E.phase2 ? E.phase2.types : E.types, pickType(bt), function () { return Math.floor(Math.random() * 4294967296); });
+      let q = safeQuestion(course, bt.phase === 2 && E.phase2 ? E.phase2.types : E.types, pickType(bt), function () { return Math.floor(Math.random() * 4294967296); });
       if (!q) { await say(bt.name + 'は ふしぎな けむりに つつまれて、どこかへ 消えてしまった……。'); result = 'flee'; break; }
+      if (q.plot && S.figChoice) { const q2 = asFigChoice(q, makeRng(Math.floor(Math.random() * 4294967296))); if (q2 && !checkQuestion(q2)) q = q2; }
       bt.lastType = q.type;
       if (job().jest && Math.random() < 0.18) await say(JEST[Math.floor(Math.random() * JEST.length)].replace('{n}', S.name));
       let acted = false;
@@ -2139,7 +2395,8 @@ M.start = function (courseId, mount) {
       const E = course.enemies[eid];
       bt = { E: E, name: E.name, hp: 10, max: 10, hints: 1, turn: 1, phase: 1, spr: enemyCanvas(E), blink: 0, bg: THEMES.cave.bg };
       mode = 'battle'; setStage('battle'); enameUpdate();
-      const q = buildQuestion(course, a[1], makeRng(parseInt(a[2] || '1', 10)));
+      let q = buildQuestion(course, a[1], makeRng(parseInt(a[2] || '1', 10)));
+      if (params.get('figchoice') === '1' && q.plot) q = asFigChoice(q, makeRng(7)) || q;
       q.hintShown = true;
       if (a[0] === 'ask') { askAnswer(q, bt, q.answers); if (q.input !== 'form' && params.get('fill') !== '0') modal.dev.fill(); if (params.get('zoom') === '1' && msgEl.querySelector('.qfig')) msgEl.querySelector('.qfig').click(); } else showExplain(q);
     } else if (a[0] === 'dun') {
@@ -2213,7 +2470,14 @@ M.start = function (courseId, mount) {
             try {
               const q = buildQuestion(course, tid, makeRng(sd * 977 + 5)), pr = askAnswer(q, { hints: 1 });
               const ci = correctInput(q);
-              if (q.input === 'choice') ci.forEach(function (i) { msgEl.querySelectorAll('.opt')[i].click(); });                        // 画面の選択肢を 実際に クリック
+              const clickAt = function (fx, fy) {            // かく図の上を 実際に クリック(図の座標 → 画面の位置)
+                const sv = msgEl.querySelector('.draw svg'), r = sv.getBoundingClientRect(), vb = sv.viewBox.baseVal;
+                sv.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: r.left + fx / vb.width * r.width, clientY: r.top + fy / vb.height * r.height }));
+              };
+              if (q.plot && q.plot.type === 'boxplot') ci.forEach(function (v, i) { msgEl.querySelectorAll('.bf')[i].click(); clickAt(boxX(q.plot, v), 40); });
+              else if (q.plot && q.plot.type === 'hist') ci.forEach(function (v, i) { const ps = histPos(q.plot, i, v); clickAt(ps[0], ps[1]); });
+              else if (q.plot) ci.forEach(function (pt) { const ps = scPos(q.plot, pt[0], pt[1]); clickAt(ps[0], ps[1]); });
+              else if (q.input === 'choice') ci.forEach(function (i) { msgEl.querySelectorAll('.opt')[i].click(); });                        // 画面の選択肢を 実際に クリック
               else if (q.input === 'order') ci.forEach(function (i) { msgEl.querySelectorAll('.opt')[q.orderShow.indexOf(i)].click(); });
               else {
                 if (q.input === 'ineq') { msgEl.querySelector('.shape[data-s="' + ci.kind + '"]').click(); if (ci.eq) modal.key({ key: 'e' }); }
@@ -2228,6 +2492,18 @@ M.start = function (courseId, mount) {
             } catch (e) { uiNg.push(tid + '#' + sd + '(' + e.message + ')'); recover(false); mode = 'map'; }
           }
         }
+        /* 図をかく問題を「図を選ぶ4択」にしたときも、画面で 正解を えらべるか */
+        let fcOk = 0, fcNg = 0;
+        for (const tid of Object.keys(course.types)) {
+          for (let sd = 1; sd <= 6; sd++) {
+            const q0 = buildQuestion(course, tid, makeRng(sd * 31 + 2)); if (!q0.plot) break;
+            const q2 = asFigChoice(q0, makeRng(sd)); if (!q2 || checkQuestion(q2)) { fcNg++; continue; }
+            const pr = askAnswer(q2, { hints: 1 }); msgEl.querySelectorAll('.opt')[correctInput(q2)[0]].click(); modal.key({ key: 'Enter' });
+            const r = await Promise.race([pr, wait(200).then(function () { return null; })]);
+            if (r && r.judge.result === 'correct') fcOk++; else { fcNg++; if (modal && modal.key) modal.key({ key: 'Escape' }); }
+          }
+        }
+        if (fcOk + fcNg) log.push('図をかく問題 → 図を選ぶ4択: 正解 ' + fcOk + ' 問 / 失敗 ' + fcNg);
         /* 図の拡大: 図をタップ → 大きく表示 → もう一度タップで もどる */
         const figType = Object.keys(course.types).filter(function (t) { return buildQuestion(course, t, makeRng(3)).fig; })[0];
         if (figType) {

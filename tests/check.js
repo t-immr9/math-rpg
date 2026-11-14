@@ -105,7 +105,7 @@ function figOk(svg) {
   if (/NaN|Infinity/.test(svg)) return '図に 計算できない数がある';
   const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg); if (!vb) return 'viewBox がない';
   const W = +vb[1], H = +vb[2]; let bad = null;
-  if (!(W === 300 && H >= 20 && H <= 260)) return '図の大きさが おかしい(' + W + '×' + H + ')';
+  if (!(W === 300 && H >= 20 && H <= 320)) return '図の大きさが おかしい(' + W + '×' + H + ')';
   svg.replace(/ (x|x1|x2|cx|y|y1|y2|cy)="(-?[\d.]+)"/g, function (m, k, v) { const lim = /y/.test(k) ? H : W; if (+v < -1 || +v > lim + 1) bad = k + '=' + v; return m; });
   svg.replace(/ points="([^"]*)"/g, function (m, list) { list.split(' ').forEach(function (pr) { const q = pr.split(','); if (+q[0] < -1 || +q[0] > W + 1 || +q[1] < -1 || +q[1] > H + 1) bad = 'points ' + pr; }); return m; });
   return bad ? '図が 枠の外に はみ出している(' + bad + ')' : null;
@@ -363,6 +363,74 @@ section('エンジン: 図(SVG)');
   const ax = M.figure.niceAxis(3, 97, 5); ok(ax.lo === 0 && ax.hi === 100 && ax.step === 20 && ax.ticks.length === 6, 'きりのよい目盛り');
 })();
 
+section('エンジン: 図をかく入力・表の空欄・図を選ぶ4択');
+(function () {
+  const DR = M.draw, R = U.makeRng(4242), J = (q, inp) => M.judgeAny(q, inp);
+  // 箱ひげ図
+  const qb = { input: 'boxplot', plot: { type: 'boxplot', axis: [10, 30, 5], step: 1, v: [12, 15, 21, 27, 30] }, mistakes: [{ v: [12, 16, 21, 26, 30], tag: 'inc', msg: 'm' }] };
+  ok(J(qb, [12, 15, 21, 27, 30]).result === 'correct', '箱ひげ図: 5つの値が 合えば 正解');
+  ok(J(qb, [12, 16, 21, 26, 30]).mistake.tag === 'inc', '箱ひげ図: コースの誤答を 見分ける');
+  ok(J(qb, [12, 14, 21, 27, 30]).mistake.tag === 'box-q1' && J(qb, [12, 15, 20, 27, 30]).mistake.tag === 'box-med' && J(qb, [11, 15, 21, 27, 30]).mistake.tag === 'box-min' && J(qb, [12, 15, 21, 28, 29]).mistake.tag === 'box-q3', '箱ひげ図: どの値が ちがうかを 見分ける');
+  ok(J(qb, [12, 21, 15, 27, 30]).mistake.tag === 'box-order' && J(qb, [12, 15, null, 27, 30]).result === 'invalid' && J(qb, [12, 15, 21]).result === 'invalid', '箱ひげ図: 順番が おかしい・置いていない値がある');
+  // ヒストグラム
+  const qh = { input: 'hist', plot: { type: 'hist', start: 40, width: 10, freqs: [2, 5, 8, 4, 1], max: 10 }, mistakes: [] };
+  ok(J(qh, [2, 5, 8, 4, 1]).result === 'correct' && J(qh, [0, 2, 5, 8, 4]).mistake.tag === 'hist-shift' && J(qh, [5, 8, 4, 1, 0]).mistake.tag === 'hist-shift', 'ヒストグラム: 正解・階級 1つぶんの ずれ');
+  ok(J(qh, [2, 5, 8, 4, 2]).mistake.tag === 'hist-total' && J(qh, [2, 5, 7, 5, 1]).mistake.tag === 'hist-class' && /60 以上 70 未満/.test(J(qh, [2, 5, 7, 5, 1]).mistake.msg) && J(qh, [2, 5, 8]).result === 'invalid', 'ヒストグラム: 合計ちがい・ちがう階級を 知らせる');
+  // 散布図
+  const qs = { input: 'scatter', plot: { type: 'scatter', xr: [0, 8, 1], yr: [0, 8, 1], pts: [[1, 2], [3, 3], [4, 6], [6, 5], [7, 7]] }, mistakes: [] };
+  ok(J(qs, [[7, 7], [6, 5], [4, 6], [3, 3], [1, 2]]).result === 'correct', '散布図: 置く順番は 問わない');
+  ok(J(qs, [[2, 1], [3, 3], [6, 4], [5, 6], [7, 7]]).mistake.tag === 'scatter-swap' && J(qs, [[1, 2], [3, 3], [4, 6], [6, 5]]).mistake.tag === 'scatter-count' && J(qs, [[1, 2], [3, 3], [4, 6], [6, 5], [7, 6]]).mistake.tag === 'scatter-point', '散布図: x と y が逆・点の数ちがい・位置ちがい');
+  // 位置 ⇔ 値(ランダムな目盛りで、タップした位置から もとの値に もどる)
+  for (let i = 0; i < 300; i++) {
+    const lo = R.int(-20, 50), st = R.pick([0.5, 1, 2, 5]), n = R.int(8, 40), pb = { type: 'boxplot', axis: [lo, lo + st * n, st * R.pick([2, 5])], step: st };
+    const k = R.int(0, n), v = lo + st * k; ok(Math.abs(DR.boxHit(pb, DR.boxX(pb, v)) - v) < 1e-9 && DR.boxHit(pb, -50) === lo && DR.boxHit(pb, 999) === lo + st * n, '箱ひげ図: 位置 → 値(はしを こえたら はしの値)');
+    const ph = { type: 'hist', start: 0, width: 10, freqs: Array.from({ length: R.int(2, 8) }, () => 0), max: R.pick([10, 15, 20]) }, ci = R.int(0, ph.freqs.length - 1), cv = R.int(0, ph.max), hp = DR.histPos(ph, ci, cv), hh = DR.histHit(ph, hp[0], hp[1]);
+    ok(hh && hh.i === ci && hh.v === cv && DR.histHit(ph, 5, 100) === null && DR.histHit(ph, hp[0], 999).v === 0 && DR.histHit(ph, hp[0], -99).v === ph.max, 'ヒストグラム: 位置 → 階級と高さ(下の はしは 0)');
+    const sx = R.pick([1, 2, 5, 10]), nx = R.int(4, 10), ny = R.int(4, 10), ps = { type: 'scatter', xr: [0, sx * nx, sx], yr: [10, 10 + 2 * ny, 2] }, px = sx * R.int(0, nx), py = 10 + 2 * R.int(0, ny), sp = DR.scPos(ps, px, py), sh = DR.scHit(ps, sp[0] + 3, sp[1] - 3);
+    ok(sh && sh[0] === px && sh[1] === py && DR.scHit(ps, 2, 150) === null && DR.scHit(ps, 150, 299) === null, '散布図: 位置 → 方眼の交点(方眼の外は 無視)');
+  }
+  // かいている途中の図・正しい図
+  [[qb, [null, 15, null, null, 30]], [qb, [12, 15, 21, 27, 30]], [qh, [0, 3, 10, 0, 1]], [qs, []], [qs, [[0, 0], [8, 8], [4, 4]]]].forEach(function (c) {
+    const e = figOk(DR.svg(c[0].plot, c[1], 1)); ok(!e, 'かいている途中の図(' + c[0].input + '): ' + e);
+    const e2 = figOk(M.figure.svg(DR.answerFig(c[0]))); ok(!e2, '正しい図(' + c[0].input + '): ' + e2);
+  });
+  ok(DR.svg(qb.plot, [12, 15, 21, 27, 30], 0).indexOf('<rect') > 0 && DR.svg(qb.plot, [12, 21, 15, 27, 30], 0).indexOf('<rect') < 0, '箱ひげ図: 5つの値が 順に そろったときだけ 箱を かく');
+  ok((DR.svg(qs.plot, [[1, 2], [3, 3]], -1).match(/<circle/g) || []).length === 2 && (DR.svg(qh.plot, [2, 0, 8, 0, 0], 0).match(/fill="rgba\(60/g) || []).length === 2, '散布図の点・ヒストグラムの柱の数');
+  // 表の空欄
+  const fake = { types: {
+    t: { gen: () => ({ text: 't', table: { head: ['階級', '度数'], rows: [['40 以上 50 未満', { a: '3' }], ['50 以上 60 未満', { a: '7' }], ['計', '10']] }, hint: 'h', explain: ['a', 'b'], mistakes: [{ answers: ['7', '3'], tag: 'sw', msg: 'm' }] }) },
+    dev: { gen: () => ({ text: 't', table: { head: ['x', 'x - 平均', '(x - 平均)^2'], rows: [['4', { a: '-1.5' }, { a: '2.25' }]] }, keys: ['.'], hint: 'h', explain: ['a', 'b'] }) },
+    badT: { gen: () => ({ text: 't', table: { rows: [['a', 'b'], ['c']] }, hint: 'h', explain: ['a', 'b'] }) },
+    noBlank: { gen: () => ({ text: 't', table: { rows: [['a', 'b']] }, hint: 'h', explain: ['a', 'b'] }) },
+    badBox: { gen: () => ({ text: 't', plot: { type: 'boxplot', axis: [0, 10, 5], step: 1, v: [1, 5, 3, 7, 9] }, hint: 'h', explain: ['a', 'b'] }) },
+    offBox: { gen: () => ({ text: 't', plot: { type: 'boxplot', axis: [0, 10, 5], step: 1, v: [1, 2.5, 3, 7, 12] }, hint: 'h', explain: ['a', 'b'] }) },
+    badHist: { gen: () => ({ text: 't', plot: { type: 'hist', start: 0, width: 10, freqs: [3, 12, 1], max: 10 }, hint: 'h', explain: ['a', 'b'] }) },
+    badSc: { gen: () => ({ text: 't', plot: { type: 'scatter', xr: [0, 8, 1], yr: [0, 8, 1], pts: [[1, 1], [1, 1]] }, hint: 'h', explain: ['a', 'b'] }) },
+    bigSc: { gen: () => ({ text: 't', plot: { type: 'scatter', xr: [0, 30, 1], yr: [0, 8, 1], pts: [[1, 1]] }, hint: 'h', explain: ['a', 'b'] }) },
+    fc: { gen: () => ({ text: 't', choices: [{ fig: DR.plotFig(qh.plot, [2, 5, 8, 4, 1]), ok: true }, { fig: DR.plotFig(qh.plot, [1, 4, 8, 5, 2]), tag: 'x', msg: 'm' }, { fig: DR.plotFig(qh.plot, [8, 5, 2, 4, 1]) }, { text: 'どれでもない' }], hint: 'h', explain: ['a', 'b'] }) },
+    fcDup: { gen: () => ({ text: 't', choices: [{ fig: DR.plotFig(qh.plot, [2, 5, 8, 4, 1]), ok: true }, { fig: DR.plotFig(qh.plot, [2, 5, 8, 4, 1]) }], hint: 'h', explain: ['a', 'b'] }) } } };
+  const qt = M.buildQuestion(fake, 't', U.makeRng(1));
+  ok(qt.input === 'table' && qt.answers.join() === '3,7' && M.checkQuestion(qt) === null && J(qt, ['3', '7']).result === 'correct' && J(qt, ['7', '3']).mistake.tag === 'sw' && J(qt, ['3', '8']).result === 'wrong' && J(qt, ['3', '']).result === 'invalid', '表の空欄: 答えは 表から集め、ふつうの空欄と 同じように 判定する');
+  const th = DR.tableHTML(qt.table, 'input'), ta = DR.tableHTML(qt.table, 'answer');
+  ok(!htmlOk(th) && !htmlOk(ta) && (th.match(/class="blank"/g) || []).length === 2 && ta.indexOf('class="blank"') < 0 && ta.indexOf('<b>3</b>') > 0 && (th.match(/<tr>/g) || []).length === 4, '表の表示(入力用は 空欄 2つ、答えは 数が入る)');
+  const qd = M.buildQuestion(fake, 'dev', U.makeRng(1)); ok(M.checkQuestion(qd) === null && J(qd, ['-1.5', '2.25']).result === 'correct' && DR.tableHTML(qd.table, 'input').indexOf('<sup>2</sup>') > 0, '偏差の表(小数・負の数・見出しの数式)');
+  ['badT', 'noBlank', 'badBox', 'offBox', 'badHist', 'badSc', 'bigSc', 'fcDup'].forEach(b => ok(typeof M.checkQuestion(M.buildQuestion(fake, b, U.makeRng(1))) === 'string', 'こわれたデータ(' + b + ')は 問題として 出さない'));
+  // 図を選ぶ4択
+  const pos = {};
+  for (let i = 0; i < 200; i++) {
+    const c = M.buildQuestion(fake, 'fc', U.makeRng(i)), oi = c.choice.findIndex(x => x.ok); pos[oi] = 1;
+    ok(M.checkQuestion(c) === null && J(c, [oi]).result === 'correct' && c.choice.every((x, k) => k === oi || J(c, [k]).result === 'wrong') && JSON.stringify(DR.answerFig(c)) === JSON.stringify(c.choice[oi].fig), '図の4択: 正しい図だけが 正解(図と 文の選択肢を まぜてもよい)');
+    [qb, qh, qs].forEach(function (q0) {
+      const fc = DR.asFigChoice(Object.assign({ text: 't', hint: 'h', explain: ['a', 'b'], keys: [] }, q0), U.makeRng(i));
+      ok(fc && fc.input === 'choice' && !fc.plot && fc.choice.length === 4 && M.checkQuestion(fc) === null && new Set(fc.choice.map(x => JSON.stringify(x.fig))).size === 4 && fc.choice.filter(x => x.ok).length === 1, '図をかく問題(' + q0.input + ')を 図の4択に 作りかえる');
+    });
+  }
+  ok(Object.keys(pos).length === 4, '図の4択も 毎回 並べ替える');
+  const fb = DR.asFigChoice(Object.assign({ text: 't', hint: 'h', explain: ['a', 'b'], keys: [] }, qb), U.makeRng(1));
+  ok(fb.choice.some(c => c.tag === 'inc') && fb.cols === 1 && /正しい図/.test(fb.text), '4択にするとき、コースの誤答の図を 先に使う');
+  ok(M.newState({ name: 'あ', gender: 0, job: 'hero' }).figChoice === false, '「図の問題:えらぶ」の設定は はじめ オフ(かく)');
+})();
+
 section('エンジン: 開発用表示ではセーブしない');
 (function () {
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
@@ -431,7 +499,7 @@ ids.forEach(function (cid) {
     if (!ok(!!t, '型 ' + id + ' が 定義されている')) return;
     ok(typeof t.name === 'string' && typeof t.level === 'number', label + ': name と level がある');
     if (typeof ref === 'string') ok(usedTypes[id], label + ': どの敵にも 使われていない');
-    let withMistake = 0; const variety = {}, before = fails, kinds = {}, shown = {};
+    let withMistake = 0; const variety = {}, before = fails, kinds = {}, shown = {}, fcPos = {};
     for (let i = 0; i < 400 && fails - before < 6; i++) {
       const q = tryDo(label + ' #' + i + ' の生成', () => M.buildQuestion(C, ref, U.makeRng(1000 + i * 7919)));
       if (!q) continue;
@@ -449,10 +517,11 @@ ids.forEach(function (cid) {
       ok(M.judgeAny(q, M.correctInput(q)).result === 'correct', tag + ': 正解を入れると 正解になる');
       ok(M.judgeAny(q, M.wrongInput(q)).result === 'wrong', tag + ': まちがいを入れると 不正解になる');
       kinds[q.input] = 1;
-      if (q.input === 'form') {
-        if (!renderOk(tag + ' form', q.form, true)) continue;
+      if (q.input === 'form' || q.input === 'table') {
+        if (q.input === 'form' && !renderOk(tag + ' form', q.form, true)) continue;
+        if (q.input === 'table') ['input', 'answer'].forEach(md => { const te = htmlOk(M.draw.tableHTML(q.table, md)); ok(!te, tag + ' 表: ' + te); });
         // 入力画面と同じ組み立てで、空欄の数が 答えの数と 同じ(ちがうと 入力画面が止まる)
-        const ui = U.mathHTML(q.text) + (q.expr ? U.mathHTML(q.expr) : '') + U.mathHTML(q.form, true) + U.mathHTML(q.hint || '');
+        const ui = U.mathHTML(q.text) + (q.expr ? U.mathHTML(q.expr) : '') + (q.input === 'form' ? U.mathHTML(q.form, true) : M.draw.tableHTML(q.table, 'input')) + U.mathHTML(q.hint || '');
         ok((ui.match(/class="blank"/g) || []).length === q.answers.length, tag + ': 入力画面の空欄の数が 答えの数と ちがう');
         const vals = q.answers.map(U.parseValue);
         if (!ok(vals.every(v => v), tag + ': 答えの書き方が正しい ' + JSON.stringify(q.answers))) continue;
@@ -480,9 +549,11 @@ ids.forEach(function (cid) {
         });
       } else if (q.input === 'choice') {
         const it = q.choice, okIdx = M.correctInput(q);
-        shown[it.findIndex(c => c.ok) + ':' + it.map(c => c.text).join('|')] = 1;
+        shown[it.findIndex(c => c.ok) + ':' + it.map(c => c.text || 'fig').join('|')] = 1;
         it.forEach(function (c, k) {
-          renderOk(tag + ' 選択肢' + (k + 1), c.text);
+          if (c.text) renderOk(tag + ' 選択肢' + (k + 1), c.text);
+          if (c.fig) { const fe = figOk(tryDo(tag + ' 選択肢の図', () => M.figure.svg(c.fig))); ok(!fe, tag + ' 選択肢' + (k + 1) + 'の図: ' + fe); }
+          ok(!!(c.text || c.fig), tag + ': 選択肢に 文か 図がある');
           if (c.ok) return;
           const j = M.judgeAny(q, [k]);
           ok(j.result === 'wrong', tag + ': まちがいの選択肢「' + c.text + '」だけを選ぶと 不正解');
@@ -506,6 +577,44 @@ ids.forEach(function (cid) {
           const j = M.judgeAny(q, m.order);
           ok(j.result === 'wrong' && !!j.mistake, mt + ': 正解と同じ順に なっている、または 診断が出ない');
         });
+      } else if (q.plot) {
+        /* 図をかく入力(箱ひげ図・ヒストグラム・散布図) */
+        const pl = q.plot, ci = M.correctInput(q), DR = M.draw, g = DR.geom;
+        kinds.draw = 1; withMistake++;                         // まちがいの種類は エンジンが 自動で見分ける
+        const e1 = figOk(DR.svg(pl, pl.type === 'boxplot' ? [null, null, null, null, null] : pl.type === 'hist' ? pl.freqs.map(() => 0) : [], 0)), e2 = figOk(DR.svg(pl, ci, 1)), e3 = figOk(M.figure.svg(DR.answerFig(q)));
+        ok(!e1 && !e2 && !e3, tag + ': かく図・正しい図が くずれている ' + (e1 || e2 || e3));
+        // 目盛りから 少しずれた所(間隔の 4割)を タップしても、正しい値が入る
+        [-0.4, 0, 0.4].forEach(function (off) {
+          let tapped;
+          if (pl.type === 'boxplot') { const sp = DR.boxX(pl, pl.axis[0] + DR.step(pl)) - DR.boxX(pl, pl.axis[0]); tapped = ci.map(v => DR.boxHit(pl, DR.boxX(pl, v) + off * sp)); ok(sp >= 4.4, tag + ': 箱ひげ図の 置ける位置の間隔が せますぎる(' + sp.toFixed(1) + ')'); }
+          else if (pl.type === 'hist') {
+            const bw = (g.hist.W - g.hist.l - g.hist.r) / pl.freqs.length, un = (g.hist.H - g.hist.t - g.hist.b) / DR.histMax(pl);
+            tapped = ci.map((v, k) => { const ps = DR.histPos(pl, k, v), h = DR.histHit(pl, ps[0] + off * bw, ps[1] + off * un); return h && h.i === k ? h.v : -1; });
+            ok(bw >= 30 && un >= 9, tag + ': ヒストグラムの 柱の幅・1目盛りの高さが 小さすぎる(' + bw.toFixed(0) + '、' + un.toFixed(1) + ')');
+          } else {
+            const sx = DR.scPos(pl, pl.xr[0] + pl.xr[2], pl.yr[0])[0] - DR.scPos(pl, pl.xr[0], pl.yr[0])[0], sy = DR.scPos(pl, pl.xr[0], pl.yr[0])[1] - DR.scPos(pl, pl.xr[0], pl.yr[0] + pl.yr[2])[1];
+            tapped = ci.map(pt => { const ps = DR.scPos(pl, pt[0], pt[1]); return DR.scHit(pl, ps[0] + off * sx, ps[1] - off * sy) || [NaN, NaN]; });
+            ok(sx >= 25 && sy >= 25, tag + ': 散布図の 方眼の間隔が せますぎる(' + sx.toFixed(0) + ')');
+          }
+          ok(M.judgeAny(q, tapped).result === 'correct', tag + ': 図の上をタップして 正解を かける(ずれ ' + off + ')');
+        });
+        const jw = M.judgeAny(q, M.wrongInput(q));
+        ok(jw.mistake && jw.mistake.tag && jw.mistake.msg, tag + ': まちがえた図には ひとことが出る') && renderOk(tag + ' 図のひとこと', jw.mistake.msg);
+        q.mistakes.forEach(function (m, k) {
+          const mv = m.v || m.freqs || m.pts, j = M.judgeAny(q, mv);
+          ok(typeof m.tag === 'string' && m.tag && typeof m.msg === 'string' && m.msg && j.result === 'wrong' && j.mistake === m, tag + ' 誤答' + (k + 1) + ': 正解と同じ図に なっている、または 診断が出ない');
+          renderOk(tag + ' 誤答' + (k + 1) + ' ひとこと', m.msg);
+        });
+        // 図を選ぶ4択に 作りかえられる(かくのが むずかしい端末用)
+        const fc = DR.asFigChoice(q, U.makeRng(i * 13 + 3));
+        if (ok(!!fc && M.checkQuestion(fc) === null, tag + ': 図を選ぶ4択に 作りかえられる(' + (fc ? M.checkQuestion(fc) : 'まちがいの図が 3つ 作れない') + ')')) {
+          const oi = fc.choice.findIndex(c => c.ok); fcPos[oi] = 1;
+          ok(fc.choice.length === 4 && fc.choice.filter(c => c.ok).length === 1 && new Set(fc.choice.map(c => JSON.stringify(c.fig))).size === 4, tag + ': 4つの図が すべて ちがい、正解は 1つ');
+          ok(JSON.stringify(fc.choice[oi].fig) === JSON.stringify(DR.answerFig(q)) && M.judgeAny(fc, [oi]).result === 'correct' && fc.choice.every((c, k) => k === oi || (M.judgeAny(fc, [k]).result === 'wrong' && !!M.judgeAny(fc, [k]).mistake)), tag + ': 4択でも 正しい図だけが 正解');
+          fc.choice.forEach(c => { const fe = figOk(M.figure.svg(c.fig)); ok(!fe, tag + ' 4択の図: ' + fe); });
+        }
+        if (q.verify) ok(tryDo(tag + ' verify', () => q.verify()) === true, tag + ': 正しい図のデータが 検算(verify)を通る');
+        else ok(t.noNum === true, tag + ': 図をかく問題には verify が必要');
       } else {
         const sl = q.sol, vs = [sl.a, sl.b].filter(x => x !== undefined), nums = vs.map(x => U.parseValue(x).num);
         ok(vs.every(x => U.parseValue(x).simple && typeable(x, q.keys)), tag + ': 不等式の値は 最も簡単な形で、キーで入力できる ' + JSON.stringify(vs));
@@ -541,6 +650,7 @@ ids.forEach(function (cid) {
     }
     if (kinds.choice) ok(Object.keys(shown).length >= 2, label + ': 選択肢の並びが 毎回 変わる');
     if (kinds.order) ok(Object.keys(shown).length >= 2, label + ': 並べ替えの 出し方が 毎回 変わる');
+    if (kinds.draw) ok(Object.keys(fcPos).length >= 3, label + ': 図を選ぶ4択にしたとき、正解の位置が 毎回 変わる');
     ok(withMistake > 0, label + ': よくある誤答のデータが 1つもない');
     ok(Object.keys(variety).length >= 4, label + ': 問題の種類が 少なすぎる(' + Object.keys(variety).length + ' 通り)');
   });

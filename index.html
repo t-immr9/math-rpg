@@ -118,6 +118,25 @@ sup:has(.mf){vertical-align:.9em}
 .shape{background:#000;border:2px solid #bcbcbc;border-radius:6px;color:#fcfcfc;font-size:14px;min-height:36px;padding:2px 4px;font-family:inherit;font-weight:bold}
 .shape.sel{border-color:#f8d820;background:#3a3400}
 .k.wide{grid-column:span 4}
+.k.tall{height:48px}
+/* 図をかく入力・表・図の選択肢(指で押しやすい大きさ) */
+.draw{line-height:0;text-align:center;margin:4px 0;cursor:crosshair}
+.draw svg{width:100%;max-width:min(440px,58vh);height:auto;touch-action:manipulation}
+.bfields{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:4px 0}
+.bf{background:#000;border:2px solid #bcbcbc;border-radius:6px;color:#fcfcfc;font-family:inherit;min-height:48px;padding:2px 0;line-height:1.25}
+.bf small{display:block;font-size:11px;color:#bcbcbc;font-weight:normal}.bf b{font-size:16px}
+.bf.sel{border-color:#f8d820;background:#3a3400}
+.qtbl{font-size:16px !important;line-height:1.6 !important;padding:2px 0 !important;overflow-x:auto}
+.tbl{border-collapse:collapse;margin:4px auto;font-size:16px;line-height:1.5}
+.tbl th,.tbl td{border:1.5px solid #bcbcbc;padding:4px 8px;text-align:center;white-space:nowrap}
+.tbl th{color:#f8d820;font-size:14px}
+.tbl td b{color:#f8d820}
+.tbl .blank{min-width:3.2em;min-height:2.3em;line-height:2.2;margin:0}
+.tbl td.tb{padding:3px 6px}
+.opt.figopt{flex-direction:column;align-items:stretch;gap:0;padding:4px 4px 2px}
+.opt.figopt b{line-height:1.2}
+.opt.figopt span{line-height:0}
+.opt.figopt svg{width:100%;height:auto}
 .ex{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP","Meiryo",sans-serif;font-size:15px}
 .exa{color:#f8d820;line-height:2.4}.exf{font-size:19px;margin-left:.4em}.exl{line-height:2.3;border-top:1px dashed #444}
 /* 全画面の画面 */

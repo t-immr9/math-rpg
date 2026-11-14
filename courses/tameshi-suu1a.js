@@ -1,6 +1,7 @@
 /* ============================================================
  * 試しのコース: 数学I・数学A で使う 新しい機能の見本
  *   図(円と接線・弦・三角形・見取り図・箱ひげ図・散布図・ヒストグラム)/ 選ぶ / 並べ替え / 小数 / 不等式 / 和・差の形の値(2±√7)
+ *   図をかく(箱ひげ図・ヒストグラム・散布図)/ 表の空欄 / 図を選ぶ4択
  * 本番のコースではない(index.html の一覧には 出さない)。開くときは  index.html?course=tameshi-suu1a
  * 見本の問題は 型の一覧の承認前の「書き方の例」。本番のコースへは そのまま 入れない。
  * ============================================================ */
@@ -330,6 +331,96 @@ types['ts-skew'] = {
   }
 };
 
+/* ---------- 図をかく・表の空欄・図を選ぶ4択 ---------- */
+function median(a) { const s = a.slice().sort(function (x, y) { return x - y; }), n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; }
+/* [最小値, Q1, 中央値, Q3, 最大値](奇数個のときは 中央値を 下半分・上半分に 入れない) */
+function five(a) { const s = a.slice().sort(function (x, y) { return x - y; }), n = s.length; return [s[0], median(s.slice(0, Math.floor(n / 2))), median(s), median(s.slice(Math.ceil(n / 2))), s[n - 1]]; }
+types['ts-draw-box'] = {
+  name: '見本: 箱ひげ図をかく', level: 0,
+  gen: function (R) {
+    const lo = 5 * R.int(2, 8);
+    const data = pickUntil(function () { const d = []; for (let i = 0; i < 9; i++) d.push(lo + R.int(0, 20)); return d; },
+      function (d) { const f = five(d); return f.every(Number.isInteger) && f[0] < f[1] && f[1] < f[2] && f[2] < f[3] && f[3] < f[4]; }, [2, 4, 6, 9, 11, 14, 16, 18, 20].map(function (x) { return x + lo; }));
+    const s = data.slice().sort(function (x, y) { return x - y; }), v = five(data), w = [s[0], s[2], s[4], s[6], s[8]];
+    return {
+      text: 'つぎの 9個のデータの 箱ひげ図をかけ。', expr: R.shuffle(data).join(', '),
+      plot: { type: 'boxplot', axis: [lo, lo + 20, 5], step: 1, v: v },
+      verify: function () { return v[0] === s[0] && v[4] === s[8] && v[2] === s[4] && v[1] === (s[1] + s[2]) / 2 && v[3] === (s[6] + s[7]) / 2; },
+      hint: 'まず 小さい順に 並べる。中央値(5番目)を のぞいた 下の 4個・上の 4個の 中央値が Q1・Q3',
+      explain: ['小さい順に並べると ' + s.join(', '), '中央値は 5番目の ' + v[2] + '。Q1 = (' + s[1] + ' + ' + s[2] + ') ÷ 2 = ' + v[1] + '、Q3 = (' + s[6] + ' + ' + s[7] + ') ÷ 2 = ' + v[3], '最小値 ' + v[0] + '、最大値 ' + v[4]],
+      mistakes: [{ v: w, tag: 'box-include-median', msg: '9個のデータでは、中央値(5番目)を のぞいた 下の 4個・上の 4個で 四分位数を 求めるよ' }].filter(function (m) { return m.v.join() !== v.join(); })
+    };
+  }
+};
+types['ts-draw-hist'] = {
+  name: '見本: 度数分布表から ヒストグラムをかく', level: 0,
+  gen: function (R) {
+    const fr = pickUntil(function () { const f = []; for (let i = 0; i < 5; i++) f.push(R.int(0, 9)); return f; }, function (f) { return new Set(f).size >= 3 && f.reduce(function (a, b) { return a + b; }, 0) >= 8; }, [2, 5, 8, 4, 1]);
+    const rows = fr.map(function (f, i) { return [(40 + 10 * i) + ' 以上 ' + (50 + 10 * i) + ' 未満', f]; }), tot = fr.reduce(function (a, b) { return a + b; }, 0);
+    return {
+      text: 'つぎの度数分布表をもとに、ヒストグラムをかけ。', fig: { type: 'table', head: ['階級(点)', '度数(人)'], rows: rows.concat([['計', tot]]) },
+      plot: { type: 'hist', start: 40, width: 10, freqs: fr, max: 10, xl: '(点)', yl: '(人)' },
+      verify: function () { return rows.every(function (r, i) { return r[1] === fr[i] && r[0].indexOf(String(40 + 10 * i)) === 0; }) && tot === fr.reduce(function (a, b) { return a + b; }, 0); },
+      hint: '階級ごとに、度数と同じ高さの柱を かく。柱と柱の間は あけない',
+      explain: ['各階級の度数が、そのまま 柱の高さになる', '左から順に ' + fr.join('、') + '(合計 ' + tot + ')']
+    };
+  }
+};
+types['ts-draw-scatter'] = {
+  name: '見本: 散布図をかく', level: 0,
+  gen: function (R) {
+    const pts = pickUntil(function () { const d = []; for (let i = 0; i < 5; i++) d.push([R.int(1, 7), R.int(1, 7)]); return d; },
+      function (d) { return new Set(d.map(function (q) { return q.join(); })).size === 5 && d.some(function (q) { return q[0] !== q[1]; }); }, [[1, 2], [3, 3], [4, 6], [6, 5], [7, 7]]);
+    const nm = ['A', 'B', 'C', 'D', 'E'];
+    return {
+      text: '5人の 2つのテストの得点 x、y が つぎの表のとおりである。散布図をかけ。', fig: { type: 'table', head: [''].concat(nm), rows: [['x'].concat(pts.map(function (q) { return q[0]; })), ['y'].concat(pts.map(function (q) { return q[1]; }))] },
+      plot: { type: 'scatter', xr: [0, 8, 1], yr: [0, 8, 1], pts: pts },
+      verify: function () { return pts.length === 5 && pts.every(function (q) { return q[0] >= 1 && q[0] <= 7 && q[1] >= 1 && q[1] <= 7; }); },
+      hint: '表の たての 1列が 1人ぶん。横軸に x、たて軸に y を とって 点を置く',
+      explain: ['表の各列の (x, y) を 1つの点として かく', '点は ' + pts.map(function (q, i) { return nm[i] + '(' + q[0] + ', ' + q[1] + ')'; }).join('、')]
+    };
+  }
+};
+types['ts-table'] = {
+  name: '見本: 度数分布表の空欄をうめる', level: 0,
+  gen: function (R) {
+    const data = []; for (let i = 0; i < 12; i++) data.push(R.int(41, 89));
+    for (let i = 0; i < 3; i++) data.push(10 * R.int(5, 8));                // 階級の はしの値(50・60・70・80)を 必ず入れる
+    const cnt = function (inc) { return [0, 1, 2, 3, 4].map(function (k) { const a = 40 + 10 * k, b = a + 10; return data.filter(function (x) { return inc ? (x >= a && x < b) : (x > a && x <= b); }).length; }); };
+    const fr = cnt(true), alt = cnt(false), ans = fr.map(String);
+    return {
+      text: 'つぎの 15人の得点を、度数分布表に まとめよ。', expr: R.shuffle(data).join(', '),
+      table: { head: ['階級(点)', '度数(人)'], rows: fr.map(function (f, k) { return [(40 + 10 * k) + ' 以上 ' + (50 + 10 * k) + ' 未満', { a: String(f) }]; }).concat([['計', '15']]) },
+      verify: function (v) { return v.reduce(function (a, b) { return a + b; }, 0) === 15 && v.every(function (x, k) { return x === data.filter(function (d) { return Math.floor(d / 10) === 4 + k; }).length; }); },
+      hint: '「以上」は その値を ふくみ、「未満」は ふくまない。数えたものに 印をつけて、合計が 15 になるか 確かめよう',
+      explain: ['「50 以上 60 未満」には 50 が入り、60 は 入らない', '度数は 上から順に ' + fr.join('、'), '合計 ' + fr.reduce(function (a, b) { return a + b; }, 0) + ' 人で、データの個数と 合う'],
+      mistakes: U.mistakes(ans, [{ answers: alt.map(String), tag: 'hist-boundary', msg: '階級の はしの値は「以上」のほうの階級に 入るよ(60点は 60 以上 70 未満)' }])
+    };
+  }
+};
+types['ts-figchoice'] = {
+  name: '見本: 図を選ぶ4択(相関のある散布図)', level: 0,
+  gen: function (R) {
+    const want = R.pick(['pos', 'neg']);
+    function make(kind) {
+      return pickUntil(function () {
+        const d = [];
+        for (let i = 0; i < 12; i++) { const x = R.int(1, 9), y = kind === 'pos' ? x + R.int(-1, 1) : kind === 'neg' ? 10 - x + R.int(-1, 1) : kind === 'flat' ? 5 + R.int(-1, 1) : R.int(1, 9); d.push([x, Math.max(0, Math.min(10, y))]); }
+        return d;
+      }, function (d) { const r = corr(d); return kind === 'pos' ? r > 0.8 : kind === 'neg' ? r < -0.8 : Math.abs(r) < 0.3; }, kind === 'flat' ? SC_FALL.none.map(function (q) { return [q[0], 5]; }) : SC_FALL[kind]);
+    }
+    const sets = { pos: make('pos'), neg: make('neg'), none: make('none'), flat: make('flat') }, fig = function (k) { return { type: 'scatter', pts: sets[k], xr: [0, 10, 2], yr: [0, 10, 2] }; };
+    const why = { pos: '右上がりの図は 正の相関だよ', neg: '右下がりの図は 負の相関だよ', none: '点が 全体に 散らばっている。これは 相関がない図だよ', flat: 'x が変わっても y が ほとんど変わらない。これは 相関がない図だよ' };
+    return {
+      text: (want === 'pos' ? '正' : '負') + 'の相関がある散布図は どれか。', cols: 2,
+      choices: ['pos', 'neg', 'none', 'flat'].map(function (k) { return { fig: fig(k), ok: k === want, tag: 'corr-fig-' + k, msg: why[k] }; }),
+      verify: function () { const r = corr(sets[want]); return (want === 'pos' ? r > 0.7 : r < -0.7) && Math.abs(corr(sets.none)) < 0.35 && Math.abs(corr(sets.flat)) < 0.35; },
+      hint: '点の集まりが 右上がりなら 正の相関、右下がりなら 負の相関',
+      explain: ['右上がり → 正の相関、右下がり → 負の相関', '散らばっている図や、横に 平らな図は 相関がない']
+    };
+  }
+};
+
 /* ==================== 絵・敵・マップ(確認用の 小さな世界) ==================== */
 const sprites = {
   kame: { mirror: true, rows: ['........', '.....lll', '....lLLL', '..lllLdL', '.lLLLLLL', 'lLLdLLLd', 'lLLLLLLL', 'lLLLLdLL', 'lLdLLLLL', '.lLLLLLL', '..llLLdL', '.ll.llll', '.ll...LL', '......LK', '......LL', '........'] },
@@ -342,13 +433,13 @@ const sprites = {
 const Z = { level: 1, hp: 0.5, atk: 0.6 };
 const enemies = {
   kame: Object.assign({ name: 'えんしゅうガメ', sprite: 'kame', types: ['ts-tangent', 'ts-power'] }, Z),
-  neko: Object.assign({ name: 'はこひげネコ', sprite: 'neko', types: ['ts-box', 'ts-hist', 'ts-median'] }, Z),
-  hotaru: Object.assign({ name: 'さんぷホタル', sprite: 'hotaru', types: ['ts-scatter'] }, Z),
+  neko: Object.assign({ name: 'はこひげネコ', sprite: 'neko', types: ['ts-box', 'ts-hist', 'ts-median', 'ts-draw-box', 'ts-draw-hist', 'ts-table'] }, Z),
+  hotaru: Object.assign({ name: 'さんぷホタル', sprite: 'hotaru', types: ['ts-scatter', 'ts-draw-scatter', 'ts-figchoice'] }, Z),
   ari: Object.assign({ name: 'ならべかえアリ', sprite: 'ari', types: ['ts-order', 'ts-center'] }, Z),
   ari2: { name: 'ふとうしきアリ', sprite: 'ari', swap: { n: 'r' }, level: 2, hp: 1, atk: 1, types: ['ts-ineq', 'ts-ineq2', 'ts-formula'] },
   kame2: { name: 'ねじれガメ', sprite: 'kame', swap: { l: 'b', L: 'C', d: 'B' }, level: 2, hp: 1, atk: 1, types: ['ts-skew'] },
   proto: { name: '試しの番人 プロトン', sprite: 'b_proto', boss: true, level: 3, hp: 5, atk: 1.2, line: '新しい しかけ、ぜんぶ 試して いくがいい!',
-    types: ['ts-tangent', 'ts-power', 'ts-box', 'ts-hist', 'ts-median', 'ts-scatter', 'ts-center', 'ts-order', 'ts-ineq', 'ts-ineq2', 'ts-formula', 'ts-skew'] }
+    types: ['ts-tangent', 'ts-power', 'ts-box', 'ts-hist', 'ts-median', 'ts-scatter', 'ts-center', 'ts-order', 'ts-ineq', 'ts-ineq2', 'ts-formula', 'ts-skew', 'ts-draw-box', 'ts-draw-hist', 'ts-draw-scatter', 'ts-table', 'ts-figchoice'] }
 };
 const maps = {
   town: { bgm: 'town',
