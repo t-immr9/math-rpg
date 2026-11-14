@@ -92,6 +92,24 @@ sup:has(.mf){vertical-align:.9em}
 .blank .bp{min-width:1.3em;min-height:1.25em;display:block}
 .blank .bp.cur{background:#6a5a00}
 .blank.act:not(:has(.bp))::after,.bp.cur::after{content:"";display:inline-block;width:2px;height:1em;background:#f8d820;vertical-align:-.1em;animation:blink .8s steps(2) infinite}
+/* 図・選ぶ・並べ替え・不等式の形 */
+.qfig{text-align:center;line-height:0;margin:2px 0}
+.qfig svg{width:100%;max-width:300px;height:auto;max-height:32vh}
+.qs{font-size:12px;color:#bcbcbc;line-height:1.6;margin-top:2px}
+.opts{display:grid;gap:6px;margin:4px 0}
+.opts.c2{grid-template-columns:1fr 1fr}.opts.c3{grid-template-columns:repeat(3,1fr)}.opts.c4{grid-template-columns:repeat(4,1fr)}
+.opt{display:flex;align-items:center;gap:8px;text-align:left;background:#000;border:2px solid #bcbcbc;border-radius:6px;padding:6px 8px;min-height:42px;font-size:15px;line-height:1.5;color:#fcfcfc;font-family:inherit;font-weight:bold}
+.opt b{flex:none;color:#f8d820}
+.opt.sel{border-color:#f8d820;background:#3a3400}
+.opt.used{opacity:.4}
+.seq{display:flex;align-items:center;justify-content:center;gap:6px;margin:6px 0;font-size:18px}
+.seq i{font-style:normal;display:inline-block;min-width:1.9em;height:1.9em;line-height:1.7em;text-align:center;border:2px dashed #bcbcbc;border-radius:4px}
+.seq i.on{border:2px solid #f8d820;background:#2a2a00}
+.seq s{text-decoration:none;color:#bcbcbc}
+.shapes{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:4px 0}
+.shape{background:#000;border:2px solid #bcbcbc;border-radius:6px;color:#fcfcfc;font-size:14px;min-height:36px;padding:2px 4px;font-family:inherit;font-weight:bold}
+.shape.sel{border-color:#f8d820;background:#3a3400}
+.k.wide{grid-column:span 4}
 .ex{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP","Meiryo",sans-serif;font-size:15px}
 .exa{color:#f8d820;line-height:2.4}.exf{font-size:19px;margin-left:.4em}.exl{line-height:2.3;border-top:1px dashed #444}
 /* 全画面の画面 */

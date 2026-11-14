@@ -40,15 +40,18 @@ function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); while (b) { const t = a %
 const SYMS = { '+': '+', '-': '-', '<': '<', '>': '>' };
 function squareFree(n) { for (let f = 2; f * f <= n; f++) if (n % (f * f) === 0) return false; return true; }
 function parsePart(s, signOk) {
-  const m = /^(-?)(\d*)(?:√(\d+))?(π?)$/.exec(s);
+  const m = /^(-?)(\d+\.\d+|\d*)(?:√(\d+))?(π?)$/.exec(s);
   if (!m || s === '' || s === '-') return null;
   if (m[1] && !signOk) return null;
   if (m[2] === '' && m[3] === undefined && m[4] === '') return null;
-  return { neg: !!m[1], digits: m[2], coef: m[2] === '' ? 1 : parseInt(m[2], 10), hasRad: m[3] !== undefined,
+  const dot = m[2].indexOf('.');
+  if (dot >= 0 && (m[3] !== undefined || m[4])) return null;            // 小数に √ や π は付けない
+  return { neg: !!m[1], digits: m[2], coef: m[2] === '' ? 1 : parseInt(m[2].replace('.', ''), 10), dec: dot < 0 ? 1 : Math.pow(10, m[2].length - dot - 1), hasRad: m[3] !== undefined,
     radDigits: m[3] || '', rad: m[3] === undefined ? 1 : parseInt(m[3], 10), pi: m[4] ? 1 : 0 };
 }
 function partSimple(p) {
-  if (p.digits.length > 1 && p.digits[0] === '0') return false;
+  const ip = p.digits.split('.')[0];
+  if (ip.length > 1 && ip[0] === '0') return false;
   if ((p.hasRad || p.pi) && (p.digits === '1' || p.digits === '0')) return false;
   if (p.hasRad && (p.rad < 2 || p.radDigits[0] === '0' || !squareFree(p.rad))) return false;
   return true;
@@ -61,7 +64,8 @@ function parseValue(raw) {
   if (parts.length > 2) return null;
   const a = parsePart(parts[0], true), b = parts.length === 2 ? parsePart(parts[1], false) : null;
   if (!a || (parts.length === 2 && !b)) return null;
-  let n = (a.neg ? -1 : 1) * a.coef, d = 1, rad = a.rad, pi = a.pi;
+  if (b && (a.dec > 1 || b.dec > 1)) return null;                       // 分数の中に小数は書かない
+  let n = (a.neg ? -1 : 1) * a.coef, d = a.dec, rad = a.rad, pi = a.pi;
   if (b) { if (b.coef === 0 || b.rad === 0) return null; d = b.coef * b.rad; rad *= b.rad; pi -= b.pi; }
   if (rad === 0) n = 0;
   let simple = partSimple(a);
@@ -211,6 +215,399 @@ function answerMarkup(raw) {
   return String(raw);
 }
 function fillForm(form, answers) { let k = 0; return String(form).replace(/□/g, function () { return answerMarkup(answers[k++]); }); }
+
+/* ===== 3b. 図(SVG)=====
+ * 問題の fig から SVG の文字列を作る。type: geo(円・接線・弦・三角形・グラフ)/ solid(空間図形の見取り図)/
+ * boxplot(箱ひげ図)/ scatter(散布図)/ hist(ヒストグラム)/ table(表)。数値から描くので、数値を変えても図が合う。 */
+const FIGC = { fg: '#fcfcfc', dim: '#8a8aa8', acc: '#f8d820', acc2: '#3cbcfc', fill: 'rgba(60,188,252,0.22)' };
+function f1(v) { return String(Math.round(v * 10) / 10); }
+function figColor(c) { return FIGC[c] || FIGC.fg; }
+function figNum(v) { return String(parseFloat(Number(v).toFixed(6))); }
+function svgWrap(w, h, body) {
+  return '<svg class="fig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" font-family="sans-serif" font-size="13" fill="none" stroke="' + FIGC.fg +
+    '" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">' + body + '</svg>';
+}
+function svgText(x, y, str, o) {
+  o = o || {};
+  return '<text x="' + f1(x) + '" y="' + f1(y) + '" text-anchor="' + (o.anchor || 'middle') + '" dominant-baseline="central" stroke="#000" stroke-width="3" paint-order="stroke" fill="' + figColor(o.color) + '"' + (o.size ? ' font-size="' + o.size + '"' : '') + '>' + escH(str) + '</text>';
+}
+function svgAttr(o) { o = o || {}; return (o.dash ? ' stroke-dasharray="4 3"' : '') + (o.color ? ' stroke="' + figColor(o.color) + '"' : '') + (o.w ? ' stroke-width="' + o.w + '"' : ''); }
+function svgLine(x1, y1, x2, y2, o) { return '<line x1="' + f1(x1) + '" y1="' + f1(y1) + '" x2="' + f1(x2) + '" y2="' + f1(y2) + '"' + svgAttr(o) + '/>'; }
+function svgPts(pts) { return pts.map(function (p) { return f1(p[0]) + ',' + f1(p[1]); }).join(' '); }
+/* きりのよい目盛り */
+function niceAxis(min, max, target) {
+  const range = (max - min) || 1, rough = range / (target || 5), pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const step = [1, 2, 5, 10].filter(function (m) { return m * pow >= rough - 1e-12; })[0] * pow;
+  let lo = Math.floor(min / step + 1e-9) * step, hi = Math.ceil(max / step - 1e-9) * step;
+  if (hi <= lo) hi = lo + step;
+  return axisTicks(lo, hi, step);
+}
+function axisTicks(lo, hi, step) {
+  const n = Math.max(1, Math.min(60, Math.round((hi - lo) / step))), ticks = [];
+  for (let i = 0; i <= n; i++) ticks.push(parseFloat((lo + i * step).toFixed(6)));
+  return { lo: lo, hi: hi, step: step, ticks: ticks };
+}
+/* 図形の計算の道具(コースで使う)。点は [x, y]、角は度、y は上向き */
+const geo = {
+  on: function (c, r, deg) { const t = deg * Math.PI / 180; return [c[0] + r * Math.cos(t), c[1] + r * Math.sin(t)]; },
+  dist: function (a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); },
+  mid: function (a, b) { return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; },
+  lerp: function (a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; },
+  /* 円周上の点 p での接線(p から両側へ l1、l2 の長さ) */
+  tangentAt: function (c, p, l1, l2) {
+    const d = geo.dist(c, p) || 1, u = [-(p[1] - c[1]) / d, (p[0] - c[0]) / d];
+    if (l2 === undefined) l2 = l1;
+    return [[p[0] - u[0] * l1, p[1] - u[1] * l1], [p[0] + u[0] * l2, p[1] + u[1] * l2]];
+  },
+  /* 円の外の点 P から引いた 2本の接線の接点(外になければ null) */
+  tangentFrom: function (c, r, P) {
+    const d = geo.dist(c, P); if (d <= r) return null;
+    const a = Math.acos(r / d) * 180 / Math.PI, base = Math.atan2(P[1] - c[1], P[0] - c[0]) * 180 / Math.PI;
+    return [geo.on(c, r, base + a), geo.on(c, r, base - a)];
+  },
+  /* 直線 ab と 直線 cd の交点(平行なら null) */
+  meet: function (a, b, c, d) {
+    const x1 = b[0] - a[0], y1 = b[1] - a[1], x2 = d[0] - c[0], y2 = d[1] - c[1], den = x1 * y2 - y1 * x2;
+    if (Math.abs(den) < 1e-12) return null;
+    const t = ((c[0] - a[0]) * y2 - (c[1] - a[1]) * x2) / den;
+    return [a[0] + x1 * t, a[1] + y1 * t];
+  },
+  foot: function (p, a, b) { const x = b[0] - a[0], y = b[1] - a[1], t = ((p[0] - a[0]) * x + (p[1] - a[1]) * y) / (x * x + y * y); return [a[0] + x * t, a[1] + y * t]; },
+  /* 3点を通る円 { c, r }(一直線上なら null) */
+  circum: function (a, b, c) {
+    const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if (Math.abs(d) < 1e-12) return null;
+    const A = a[0] * a[0] + a[1] * a[1], B = b[0] * b[0] + b[1] * b[1], C = c[0] * c[0] + c[1] * c[1];
+    const o = [(A * (b[1] - c[1]) + B * (c[1] - a[1]) + C * (a[1] - b[1])) / d, (A * (c[0] - b[0]) + B * (a[0] - c[0]) + C * (b[0] - a[0])) / d];
+    return { c: o, r: geo.dist(o, a) };
+  },
+  /* ∠a-at-b の大きさ(0〜180 度) */
+  angleDeg: function (at, a, b) {
+    const u = [a[0] - at[0], a[1] - at[1]], v = [b[0] - at[0], b[1] - at[1]];
+    return Math.acos(Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1]) / (Math.hypot(u[0], u[1]) * Math.hypot(v[0], v[1]))))) * 180 / Math.PI;
+  },
+  /* y = ax² + bx + c のグラフの点の列 */
+  parabola: function (a, b, c, x0, x1, n) { const pts = []; n = n || 40; for (let i = 0; i <= n; i++) { const x = x0 + (x1 - x0) * i / n; pts.push([x, a * x * x + b * x + c]); } return pts; }
+};
+const POSDIR = { e: 0, ne: 45, n: 90, nw: 135, w: 180, sw: 225, s: 270, se: 315 };
+function figGeo(f) {
+  const items = f.items || [], P = [];
+  items.forEach(function (it) {
+    if (it.t === 'circle') { P.push([it.c[0] - it.r, it.c[1] - it.r], [it.c[0] + it.r, it.c[1] + it.r]); return; }
+    if (it.t === 'axis') { P.push([it.x[0], 0], [it.x[1], 0]); if (it.y) P.push([0, it.y[0]], [0, it.y[1]]); return; }
+    if (it.t === 'angle' || it.t === 'right') { P.push(it.at); return; }
+    ['a', 'b', 'p'].forEach(function (k) { if (it[k]) P.push(it[k]); });
+    (it.pts || []).forEach(function (p) { P.push(p); });
+  });
+  let v = f.view;
+  if (!v) {
+    v = P.length ? [Infinity, Infinity, -Infinity, -Infinity] : [0, 0, 1, 1];
+    P.forEach(function (p) { v[0] = Math.min(v[0], p[0]); v[1] = Math.min(v[1], p[1]); v[2] = Math.max(v[2], p[0]); v[3] = Math.max(v[3], p[1]); });
+  } else v = v.slice();
+  if (v[2] - v[0] < 1e-9) { v[0] -= 1; v[2] += 1; }
+  if (v[3] - v[1] < 1e-9) { v[1] -= 1; v[3] += 1; }
+  const W = 300, m = f.pad === undefined ? 28 : f.pad, maxH = f.maxH || 230;
+  let sc = (W - 2 * m) / (v[2] - v[0]);
+  if ((v[3] - v[1]) * sc + 2 * m > maxH) sc = (maxH - 2 * m) / (v[3] - v[1]);
+  const H = Math.round((v[3] - v[1]) * sc + 2 * m), ox = (W - (v[2] - v[0]) * sc) / 2;
+  const X = function (x) { return ox + (x - v[0]) * sc; }, Y = function (y) { return H - m - (y - v[1]) * sc; };
+  const cl = function (val, lo, hi) { return Math.max(lo, Math.min(hi, val)); };
+  let out = '';
+  items.forEach(function (it) {
+    if (it.t === 'circle') out += '<circle cx="' + f1(X(it.c[0])) + '" cy="' + f1(Y(it.c[1])) + '" r="' + f1(it.r * sc) + '"' + svgAttr(it) + '/>';
+    else if (it.t === 'seg') {
+      out += svgLine(X(it.a[0]), Y(it.a[1]), X(it.b[0]), Y(it.b[1]), it);
+      if (it.label !== undefined) {
+        const mx = (X(it.a[0]) + X(it.b[0])) / 2, my = (Y(it.a[1]) + Y(it.b[1])) / 2, dx = X(it.b[0]) - X(it.a[0]), dy = Y(it.b[1]) - Y(it.a[1]), L = Math.hypot(dx, dy) || 1, sd = (it.side || 1) * 12;
+        out += svgText(cl(mx - dy / L * sd, 8, W - 8), cl(my + dx / L * sd, 8, H - 8), String(it.label), { color: it.lcolor || it.color });
+      }
+    } else if (it.t === 'line') {                 // 直線: 図の枠いっぱいまで のばす
+      const e = (m - 8) / sc, bx = [v[0] - e, v[2] + e], by = [v[1] - e, v[3] + e], dx = it.b[0] - it.a[0], dy = it.b[1] - it.a[1];
+      let t0 = -1e9, t1 = 1e9;
+      [[dx, it.a[0], bx], [dy, it.a[1], by]].forEach(function (q) {
+        if (Math.abs(q[0]) < 1e-12) return;
+        const ta = (q[2][0] - q[1]) / q[0], tb = (q[2][1] - q[1]) / q[0];
+        t0 = Math.max(t0, Math.min(ta, tb)); t1 = Math.min(t1, Math.max(ta, tb));
+      });
+      if (t1 > t0 && t0 > -1e8 && t1 < 1e8) out += svgLine(cl(X(it.a[0] + dx * t0), 0, W), cl(Y(it.a[1] + dy * t0), 0, H), cl(X(it.a[0] + dx * t1), 0, W), cl(Y(it.a[1] + dy * t1), 0, H), it);
+    } else if (it.t === 'poly') out += '<polygon points="' + svgPts(it.pts.map(function (p) { return [X(p[0]), Y(p[1])]; })) + '"' + (it.fill ? ' fill="' + FIGC.fill + '"' : '') + svgAttr(it) + '/>';
+    else if (it.t === 'curve') out += '<polyline points="' + svgPts(it.pts.map(function (p) { return [cl(X(p[0]), 0, W), cl(Y(p[1]), 0, H)]; })) + '"' + svgAttr(it) + '/>';
+    else if (it.t === 'point') {
+      const x = X(it.p[0]), y = Y(it.p[1]);
+      if (it.dot !== false) out += '<circle cx="' + f1(x) + '" cy="' + f1(y) + '" r="2.6" fill="' + figColor(it.color) + '" stroke="none"/>';
+      if (it.label !== undefined) {
+        let d = it.away ? Math.atan2(it.p[1] - it.away[1], it.p[0] - it.away[0]) : (typeof it.dir === 'number' ? it.dir : POSDIR[it.pos] === undefined ? 90 : POSDIR[it.pos]) * Math.PI / 180;
+        out += svgText(cl(x + Math.cos(d) * 13, 8, W - 8), cl(y - Math.sin(d) * 13, 8, H - 8), String(it.label), { color: it.color });
+      }
+    } else if (it.t === 'angle') {                // 角の印(小さい弧)と ラベル
+      const a0 = Math.atan2(it.a[1] - it.at[1], it.a[0] - it.at[0]), a1 = Math.atan2(it.b[1] - it.at[1], it.b[0] - it.at[0]);
+      let d = a1 - a0; while (d > Math.PI) d -= 2 * Math.PI; while (d <= -Math.PI) d += 2 * Math.PI;
+      const R = it.r || 17, cx = X(it.at[0]), cy = Y(it.at[1]), pts = [];
+      for (let k = 0; k <= 12; k++) { const t = a0 + d * k / 12; pts.push([cx + R * Math.cos(t), cy - R * Math.sin(t)]); }
+      out += '<polyline points="' + svgPts(pts) + '"' + svgAttr(it) + '/>';
+      if (it.label !== undefined) { const t = a0 + d / 2; out += svgText(cl(cx + (R + 13) * Math.cos(t), 8, W - 8), cl(cy - (R + 13) * Math.sin(t), 8, H - 8), String(it.label), { color: it.color }); }
+    } else if (it.t === 'right') {                // 直角の印
+      const cx = X(it.at[0]), cy = Y(it.at[1]);
+      const un = function (p) { const dx = X(p[0]) - cx, dy = Y(p[1]) - cy, L = Math.hypot(dx, dy) || 1; return [dx / L * 9, dy / L * 9]; }, u = un(it.a), w = un(it.b);
+      out += '<polyline points="' + svgPts([[cx + u[0], cy + u[1]], [cx + u[0] + w[0], cy + u[1] + w[1]], [cx + w[0], cy + w[1]]]) + '"' + svgAttr(it) + '/>';
+    } else if (it.t === 'text') out += svgText(cl(X(it.p[0]), 8, W - 8), cl(Y(it.p[1]), 8, H - 8), String(it.s), { color: it.color, size: it.size });
+    else if (it.t === 'axis') {
+      const x0 = X(it.x[0]) - 6, x1 = X(it.x[1]) + 10, y0 = Y(0);
+      out += svgLine(x0, y0, x1, y0, { color: 'dim' }) + '<polyline points="' + svgPts([[x1 - 5, y0 - 3], [x1, y0], [x1 - 5, y0 + 3]]) + '" stroke="' + FIGC.dim + '"/>' + svgText(Math.min(W - 8, x1 + 7), y0, it.xl || 'x', { color: 'dim', size: 12 });
+      if (it.y) {
+        const xx = X(0), ya = Y(it.y[0]) + 6, yb = Y(it.y[1]) - 10;
+        out += svgLine(xx, ya, xx, yb, { color: 'dim' }) + '<polyline points="' + svgPts([[xx - 3, yb + 5], [xx, yb], [xx + 3, yb + 5]]) + '" stroke="' + FIGC.dim + '"/>' + svgText(xx, Math.max(8, yb - 8), it.yl || 'y', { color: 'dim', size: 12 }) + svgText(xx - 8, y0 + 9, 'O', { color: 'dim', size: 12 });
+      }
+    } else throw new Error('図の部品の種類が ちがいます: ' + it.t);
+  });
+  return svgWrap(W, H, out);
+}
+/* 空間図形の見取り図。verts: { A: [x, y, z] }(x 右、y 奥、z 上)、edges: ['AB', …]、faces: [['A','B','C','D'], …](かくれた辺を破線にするのに使う) */
+function edgeEnds(e) { return typeof e === 'string' ? [e[0], e[1]] : [e[0], e[1]]; }
+function edgeKey(e) { const p = edgeEnds(e); return p[0] < p[1] ? p[0] + p[1] : p[1] + p[0]; }
+function figSolid(f) {
+  const k = 0.45, ca = Math.cos(35 * Math.PI / 180), sa = Math.sin(35 * Math.PI / 180), names = Object.keys(f.verts), p2 = {};
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; const cen = [0, 0, 0];
+  names.forEach(function (n) {
+    const q = f.verts[n]; p2[n] = [q[0] + k * ca * q[1], q[2] + k * sa * q[1]];
+    x0 = Math.min(x0, p2[n][0]); x1 = Math.max(x1, p2[n][0]); y0 = Math.min(y0, p2[n][1]); y1 = Math.max(y1, p2[n][1]);
+    cen[0] += q[0] / names.length; cen[1] += q[1] / names.length; cen[2] += q[2] / names.length;
+  });
+  if (x1 - x0 < 1e-9) x1 = x0 + 1; if (y1 - y0 < 1e-9) y1 = y0 + 1;
+  const W = 300, m = 30, maxH = f.maxH || 220;
+  let sc = (W - 2 * m) / (x1 - x0); if ((y1 - y0) * sc + 2 * m > maxH) sc = (maxH - 2 * m) / (y1 - y0);
+  const H = Math.round((y1 - y0) * sc + 2 * m), ox = (W - (x1 - x0) * sc) / 2;
+  const S = function (n) { if (!p2[n]) throw new Error('頂点がありません: ' + n); return [ox + (p2[n][0] - x0) * sc, H - m - (p2[n][1] - y0) * sc]; };
+  /* 見える面: 外向きの法線が 手前を向いている面 */
+  const seen = {}, inFace = {}, dir = [-k * ca, 1, -k * sa];
+  (f.faces || []).forEach(function (face) {
+    const nrm = [0, 0, 0], fc = [0, 0, 0];
+    face.forEach(function (n, i) {
+      const a = f.verts[n], b = f.verts[face[(i + 1) % face.length]];
+      nrm[0] += (a[1] - b[1]) * (a[2] + b[2]); nrm[1] += (a[2] - b[2]) * (a[0] + b[0]); nrm[2] += (a[0] - b[0]) * (a[1] + b[1]);
+      fc[0] += a[0] / face.length; fc[1] += a[1] / face.length; fc[2] += a[2] / face.length;
+    });
+    if (nrm[0] * (fc[0] - cen[0]) + nrm[1] * (fc[1] - cen[1]) + nrm[2] * (fc[2] - cen[2]) < 0) { nrm[0] = -nrm[0]; nrm[1] = -nrm[1]; nrm[2] = -nrm[2]; }
+    const vis = nrm[0] * dir[0] + nrm[1] * dir[1] + nrm[2] * dir[2] < -1e-9;
+    face.forEach(function (n, i) { const key = edgeKey([n, face[(i + 1) % face.length]]); inFace[key] = 1; if (vis) seen[key] = 1; });
+  });
+  const hidden = function (e) { const key = edgeKey(e); return !!inFace[key] && !seen[key]; };
+  const marks = {}; (f.mark || []).forEach(function (e) { marks[edgeKey(e)] = 1; });
+  let out = '';
+  (f.shade || []).forEach(function (face) { out += '<polygon points="' + svgPts(face.map(S)) + '" fill="' + FIGC.fill + '" stroke="none"/>'; });
+  const draw = function (e, o) { const p = edgeEnds(e), a = S(p[0]), b = S(p[1]); return svgLine(a[0], a[1], b[0], b[1], o); };
+  (f.edges || []).forEach(function (e) { if (hidden(e) && !marks[edgeKey(e)]) out += draw(e, { dash: true, color: 'dim', w: 1.2 }); });
+  (f.edges || []).forEach(function (e) { if (!hidden(e) && !marks[edgeKey(e)]) out += draw(e); });
+  (f.segs || []).forEach(function (sg) { const o = Array.isArray(sg) || typeof sg === 'string' ? { e: sg } : sg; out += draw(o.e, { dash: o.dash !== false, color: o.color || 'acc2' }); });
+  (f.mark || []).forEach(function (e) { out += draw(e, { color: 'acc', w: 3, dash: hidden(e) }); });
+  if (f.labels !== false) {
+    const c2 = [0, 0]; names.forEach(function (n) { const q = S(n); c2[0] += q[0] / names.length; c2[1] += q[1] / names.length; });
+    names.forEach(function (n) { const q = S(n), dx = q[0] - c2[0], dy = q[1] - c2[1], L = Math.hypot(dx, dy) || 1; out += svgText(q[0] + dx / L * 13, q[1] + dy / L * 13, n); });
+  }
+  return svgWrap(W, H, out);
+}
+/* 見取り図のもと(頂点・辺・面)を作る。コースで Object.assign して mark などを足す */
+const solids = {
+  /* 直方体 ABCD-EFGH(ABCD が上の面、A の真下が E) */
+  cuboid: function (a, b, c, names) {
+    const n = names || 'ABCDEFGH', v = {}, pos = [[0, b, c], [0, 0, c], [a, 0, c], [a, b, c], [0, b, 0], [0, 0, 0], [a, 0, 0], [a, b, 0]];
+    pos.forEach(function (p, i) { v[n[i]] = p; });
+    const E = function (i, j) { return n[i] + n[j]; }, F = function (l) { return l.map(function (i) { return n[i]; }); };
+    return { type: 'solid', verts: v, edges: [E(0, 1), E(1, 2), E(2, 3), E(3, 0), E(4, 5), E(5, 6), E(6, 7), E(7, 4), E(0, 4), E(1, 5), E(2, 6), E(3, 7)],
+      faces: [F([0, 1, 2, 3]), F([4, 5, 6, 7]), F([0, 1, 5, 4]), F([1, 2, 6, 5]), F([2, 3, 7, 6]), F([3, 0, 4, 7])] };
+  },
+  /* 正 n 角柱(上の面の名前が先。例: 三角柱 ABC-DEF) */
+  prism: function (n, r, h, names) {
+    const nm = names || 'ABCDEFGHIJKL', v = {}, edges = [], faces = [[], []];
+    for (let i = 0; i < n; i++) {
+      const t = (210 + 360 * i / n) * Math.PI / 180, x = r * Math.cos(t), y = r * Math.sin(t) + r;
+      v[nm[i]] = [x, y, h]; v[nm[n + i]] = [x, y, 0];
+      edges.push(nm[i] + nm[(i + 1) % n], nm[n + i] + nm[n + (i + 1) % n], nm[i] + nm[n + i]);
+      faces[0].push(nm[i]); faces[1].push(nm[n + i]); faces.push([nm[i], nm[(i + 1) % n], nm[n + (i + 1) % n], nm[n + i]]);
+    }
+    return { type: 'solid', verts: v, edges: edges, faces: faces };
+  },
+  /* 正 n 角錐(頂点 O、底面 ABC…) */
+  pyramid: function (n, r, h, names) {
+    const nm = names || 'OABCDEFGH', v = {}, edges = [], faces = [[]];
+    v[nm[0]] = [0, r, h];
+    for (let i = 0; i < n; i++) {
+      const t = (225 + 360 * i / n) * Math.PI / 180;
+      v[nm[1 + i]] = [r * Math.cos(t), r * Math.sin(t) + r, 0];
+      edges.push(nm[1 + i] + nm[1 + (i + 1) % n], nm[0] + nm[1 + i]);
+      faces[0].push(nm[1 + i]); faces.push([nm[0], nm[1 + i], nm[1 + (i + 1) % n]]);
+    }
+    return { type: 'solid', verts: v, edges: edges, faces: faces };
+  }
+};
+/* 箱ひげ図。rows: [{ label, v: [最小, Q1, 中央, Q3, 最大], out: [外れ値] }]、axis: [左, 右, 目盛りの間隔]、minor: 小さい目盛りの間隔 */
+function figBox(f) {
+  const rows = f.rows || [], all = [];
+  rows.forEach(function (r) { r.v.forEach(function (x) { all.push(x); }); (r.out || []).forEach(function (x) { all.push(x); }); });
+  const ax = f.axis ? axisTicks(f.axis[0], f.axis[1], f.axis[2]) : niceAxis(Math.min.apply(null, all), Math.max.apply(null, all), 6);
+  const W = 300, left = rows.some(function (r) { return r.label; }) ? 44 : 18, right = 18, rowH = 36, top = 8, H = top + rows.length * rowH + (f.unit ? 44 : 34);
+  const X = function (val) { return left + (val - ax.lo) / (ax.hi - ax.lo) * (W - left - right); }, base = top + rows.length * rowH + 4;
+  let out = svgLine(left, base, W - right, base, { color: 'dim' });
+  if (f.minor) for (let i = 0, n = Math.min(200, Math.round((ax.hi - ax.lo) / f.minor)); i <= n; i++) { const x = X(ax.lo + i * f.minor); out += svgLine(x, base, x, base + 3, { color: 'dim', w: 1 }); }
+  ax.ticks.forEach(function (t) { out += svgLine(X(t), base, X(t), base + 6, { color: 'dim' }) + svgText(X(t), base + 16, figNum(t), { color: 'dim', size: 11 }); });
+  if (f.unit) out += svgText(W - right, base + 30, f.unit, { color: 'dim', size: 11, anchor: 'end' });
+  rows.forEach(function (r, i) {
+    const y = top + i * rowH + rowH / 2, hh = 10, q = r.v.map(X);
+    out += svgLine(q[0], y, q[1], y) + svgLine(q[3], y, q[4], y) + svgLine(q[0], y - 5, q[0], y + 5) + svgLine(q[4], y - 5, q[4], y + 5) +
+      '<rect x="' + f1(q[1]) + '" y="' + f1(y - hh) + '" width="' + f1(Math.max(0, q[3] - q[1])) + '" height="' + (hh * 2) + '" fill="' + FIGC.fill + '"/>' + svgLine(q[2], y - hh, q[2], y + hh, { color: 'acc', w: 2.2 });
+    (r.out || []).forEach(function (o) { out += '<circle cx="' + f1(X(o)) + '" cy="' + f1(y) + '" r="3"/>'; });
+    if (r.label) out += svgText(left - 8, y, r.label, { anchor: 'end', size: 12 });
+  });
+  return svgWrap(W, H, out);
+}
+/* 散布図。pts: [[x, y], …]、xr / yr: [最小, 最大, 目盛り](なければ自動)、xl / yl: 軸の名前 */
+function figScatter(f) {
+  const xs = f.pts.map(function (p) { return p[0]; }), ys = f.pts.map(function (p) { return p[1]; });
+  const ax = f.xr ? axisTicks(f.xr[0], f.xr[1], f.xr[2]) : niceAxis(Math.min.apply(null, xs), Math.max.apply(null, xs), 5), ay = f.yr ? axisTicks(f.yr[0], f.yr[1], f.yr[2]) : niceAxis(Math.min.apply(null, ys), Math.max.apply(null, ys), 5);
+  const W = 300, H = 220, l = 40, r = 14, t = 12, b = 34;
+  const X = function (v) { return l + (v - ax.lo) / (ax.hi - ax.lo) * (W - l - r); }, Y = function (v) { return H - b - (v - ay.lo) / (ay.hi - ay.lo) * (H - t - b); };
+  let out = '<rect x="' + l + '" y="' + t + '" width="' + (W - l - r) + '" height="' + (H - t - b) + '" stroke="' + FIGC.dim + '"/>';
+  ax.ticks.forEach(function (v) { out += svgLine(X(v), H - b, X(v), H - b + 5, { color: 'dim' }) + svgText(X(v), H - b + 14, figNum(v), { color: 'dim', size: 11 }); });
+  ay.ticks.forEach(function (v) { out += svgLine(l - 5, Y(v), l, Y(v), { color: 'dim' }) + svgText(l - 8, Y(v), figNum(v), { color: 'dim', size: 11, anchor: 'end' }); });
+  f.pts.forEach(function (p) { out += '<circle cx="' + f1(X(p[0])) + '" cy="' + f1(Y(p[1])) + '" r="3.2" fill="' + FIGC.acc + '" stroke="none"/>'; });
+  out += svgText((l + W - r) / 2, H - 7, f.xl || 'x', { size: 12 }) + svgText(10, t + 6, f.yl || 'y', { size: 12 });
+  return svgWrap(W, H, out);
+}
+/* ヒストグラム。start: 最初の階級の左はし、width: 階級の幅、freqs: 度数の列 */
+function figHist(f) {
+  const n = f.freqs.length, ay = niceAxis(0, Math.max.apply(null, f.freqs.concat([1])), 5), W = 300, H = 200, l = 34, r = 14, t = 14, b = 34;
+  const bw = (W - l - r) / n, Y = function (v) { return H - b - v / ay.hi * (H - t - b); };
+  let out = '';
+  ay.ticks.forEach(function (v) { if (v !== Math.round(v)) return; out += svgLine(l, Y(v), W - r, Y(v), { color: 'dim', w: 0.6, dash: v > 0 }) + svgText(l - 7, Y(v), figNum(v), { color: 'dim', size: 11, anchor: 'end' }); });
+  f.freqs.forEach(function (v, i) { out += '<rect x="' + f1(l + i * bw) + '" y="' + f1(Y(v)) + '" width="' + f1(bw) + '" height="' + f1(Y(0) - Y(v)) + '" fill="' + FIGC.fill + '"/>'; });
+  const every = n > 8 ? 2 : 1;
+  for (let i = 0; i <= n; i += every) out += svgText(l + i * bw, H - b + 12, figNum(f.start + i * f.width), { color: 'dim', size: 11 });
+  out += svgLine(l, H - b, W - r, H - b) + svgText(W - r, H - 7, f.xl || '', { size: 12, anchor: 'end' }) + svgText(l, 6, f.yl || '', { size: 12, anchor: 'start' });
+  return svgWrap(W, H, out);
+}
+/* 表(度数分布表など)。head: 見出しの行、rows: [[…], …] */
+function figTable(f) {
+  const rows = (f.head ? [f.head] : []).concat(f.rows || []), cols = Math.max.apply(null, rows.map(function (r) { return r.length; }).concat([1])), W = 300, rh = 24, cw = (W - 2) / cols, H = rows.length * rh + 2;
+  let out = '<rect x="1" y="1" width="' + (W - 2) + '" height="' + (H - 2) + '"/>';
+  rows.forEach(function (r, i) {
+    if (i) out += svgLine(1, 1 + i * rh, W - 1, 1 + i * rh, { w: f.head && i === 1 ? 1.6 : 0.8 });
+    r.forEach(function (c, j) { out += svgText(1 + j * cw + cw / 2, 1 + i * rh + rh / 2, String(c), { color: f.head && i === 0 ? 'acc' : undefined, size: 12 }); });
+  });
+  for (let j = 1; j < cols; j++) out += svgLine(1 + j * cw, 1, 1 + j * cw, H - 1, { w: 0.8 });
+  return svgWrap(W, H, out);
+}
+function figureSVG(fig) {
+  if (!fig || typeof fig !== 'object') throw new Error('図のデータが ありません');
+  const fn = { geo: figGeo, solid: figSolid, boxplot: figBox, scatter: figScatter, hist: figHist, table: figTable }[fig.type];
+  if (!fn) throw new Error('図の種類が ちがいます: ' + fig.type);
+  const svg = fn(fig);
+  if (/NaN|Infinity|undefined/.test(svg)) throw new Error('図に 計算できない数が あります(' + fig.type + ')');
+  return svg;
+}
+
+/* ===== 3c. 入力の種類 =====
+ * form(空欄に数を入れる。これまでの形)/ choice(選ぶ)/ order(タップした順に並べる)/ ineq(不等式の形をえらんで 空欄を うめる) */
+const KANA = ['ア', 'イ', 'ウ', 'エ', 'オ', 'カ', 'キ', 'ク'], CNUM = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫'];
+const SHAPES = { between: 2, outside: 2, gt: 1, lt: 1, point: 1, except: 1, all: 0, none: 0 };     // 形 → 空欄の数
+const SHAPE_ORDER = ['between', 'outside', 'gt', 'lt', 'point', 'except', 'all', 'none'];
+/* 不等式の答えのマークアップ。a、b は 入れる文字列(□ や 値) */
+function shapeMarkup(kind, eq, v, a, b) {
+  const lt = eq ? '≦' : '<', gt = eq ? '≧' : '>';
+  switch (kind) {
+    case 'between': return a + ' ' + lt + ' ' + v + ' ' + lt + ' ' + b;
+    case 'outside': return v + ' ' + lt + ' ' + a + ', ' + b + ' ' + lt + ' ' + v;
+    case 'gt': return v + ' ' + gt + ' ' + a;
+    case 'lt': return v + ' ' + lt + ' ' + a;
+    case 'point': return v + ' = ' + a;
+    case 'except': return a + ' 以外の すべての実数';
+    case 'all': return 'すべての実数';
+    case 'none': return '解なし';
+  }
+  throw new Error('不等式の形が ちがいます: ' + kind);
+}
+function solMarkup(sol, v) { return shapeMarkup(sol.kind, !!sol.eq, v || 'x', sol.a === undefined ? '' : answerMarkup(sol.a), sol.b === undefined ? '' : answerMarkup(sol.b)); }
+/* x が その答え(範囲)に 入っているか */
+function solContains(sol, x) {
+  const a = sol.a === undefined ? NaN : parseValue(sol.a).num, b = sol.b === undefined ? NaN : parseValue(sol.b).num, e = !!sol.eq;
+  switch (sol.kind) {
+    case 'between': return e ? (a <= x && x <= b) : (a < x && x < b);
+    case 'outside': return e ? (x <= a || b <= x) : (x < a || b < x);
+    case 'gt': return e ? x >= a : x > a;
+    case 'lt': return e ? x <= a : x < a;
+    case 'point': return x === a;
+    case 'except': return x !== a;
+    case 'all': return true;
+    case 'none': return false;
+  }
+  return false;
+}
+/* 同じ範囲を表す 別の書き方を そろえる(x<2, 2<x は「2 以外のすべての実数」と同じ、など) */
+function solNorm(kind, eq, ka, kb) {
+  if (kind === 'all' || kind === 'none') return kind;
+  if (kind === 'point' || kind === 'except') return kind + '|' + ka;
+  if (kind === 'outside' && ka === kb) return eq ? 'all' : 'except|' + ka;
+  if (kind === 'between' && ka === kb) return eq ? 'point|' + ka : 'none';
+  return kind + '|' + (eq ? 1 : 0) + '|' + ka + (SHAPES[kind] === 2 ? '|' + kb : '');
+}
+function judgeSol(q, inp) {
+  const n = SHAPES[inp.kind]; if (n === undefined) return { result: 'invalid', index: 0 };
+  const vals = (inp.raws || []).slice(0, n).map(parseValue);
+  for (let i = 0; i < n; i++) if (!vals[i]) return { result: 'invalid', index: i };
+  const keys = vals.map(function (x) { return x.key; }), c = q.sol;
+  const ck = [c.a, c.b].map(function (x) { return x === undefined ? '' : parseValue(x).key; });
+  if (solNorm(inp.kind, !!inp.eq, keys[0], keys[1]) === solNorm(c.kind, !!c.eq, ck[0], ck[1])) return { result: vals.every(function (x) { return x.simple; }) ? 'correct' : 'unsimplified' };
+  const ms = q.mistakes || [];
+  for (let i = 0; i < ms.length; i++) {
+    const sm = ms[i].sol; if (!sm || sm.kind !== inp.kind) continue;
+    if (sm.eq !== undefined && SHAPES[sm.kind] > 0 && sm.kind !== 'point' && sm.kind !== 'except' && !!sm.eq !== !!inp.eq) continue;
+    if (sm.a !== undefined && sm.a !== '*' && (parseValue(sm.a) || {}).key !== keys[0]) continue;
+    if (sm.b !== undefined && sm.b !== '*' && (parseValue(sm.b) || {}).key !== keys[1]) continue;
+    return { result: 'wrong', mistake: ms[i] };
+  }
+  return { result: 'wrong' };
+}
+/* どの入力の種類でも使える判定。inp は form: 文字列の列 / choice: えらんだ番号の列 / order: タップした順(もとの番号)/ ineq: { kind, eq, raws } */
+function judgeAny(q, inp) {
+  const kind = q.input || 'form';
+  if (kind === 'form') return judge(q, inp);
+  if (kind === 'ineq') return judgeSol(q, inp);
+  if (kind === 'order') {
+    if (inp.length === q.order.length && inp.every(function (x, i) { return x === i; })) return { result: 'correct' };
+    const ms = q.mistakes || [];
+    for (let i = 0; i < ms.length; i++) if (ms[i].order && ms[i].order.length === inp.length && ms[i].order.every(function (x, k) { return x === inp[k]; })) return { result: 'wrong', mistake: ms[i] };
+    return { result: 'wrong' };
+  }
+  const pick = inp.slice().sort(function (a, b) { return a - b; }), okIdx = [];
+  q.choice.forEach(function (c, i) { if (c.ok) okIdx.push(i); });
+  if (pick.length === okIdx.length && pick.every(function (x, i) { return x === okIdx[i]; })) return { result: 'correct' };
+  for (let i = 0; i < pick.length; i++) { const c = q.choice[pick[i]]; if (c && !c.ok && c.tag) return { result: 'wrong', mistake: { tag: c.tag, msg: c.msg || '' } }; }
+  if (q.multi && pick.length && pick.every(function (x) { return q.choice[x] && q.choice[x].ok; })) return { result: 'wrong', mistake: { tag: 'choice-missing', msg: q.missingMsg || 'えらんだものは 合っている。まだ ほかにも あるよ(数え落としに 注意)' } };
+  return { result: 'wrong' };
+}
+/* 正解の入力・まちがいの入力の例(テストと 動作確認に使う) */
+function correctInput(q) {
+  const kind = q.input || 'form';
+  if (kind === 'form') return q.answers.slice();
+  if (kind === 'order') return q.order.map(function (_, i) { return i; });
+  if (kind === 'ineq') return { kind: q.sol.kind, eq: !!q.sol.eq, raws: [q.sol.a, q.sol.b].filter(function (x) { return x !== undefined; }) };
+  const out = []; q.choice.forEach(function (c, i) { if (c.ok) out.push(i); }); return out;
+}
+function wrongInput(q) {
+  const kind = q.input || 'form';
+  if (kind === 'form') { const m = (q.mistakes || [])[0]; return m ? m.answers.map(function (x, i) { return x === '*' ? q.answers[i] : x; }) : q.answers.map(function () { return '9999'; }); }
+  if (kind === 'order') return q.order.map(function (_, i) { return q.order.length - 1 - i; });
+  if (kind === 'ineq') return { kind: q.sol.kind === 'none' ? 'all' : 'none', eq: false, raws: [] };
+  for (let i = 0; i < q.choice.length; i++) if (!q.choice[i].ok) return [i];
+  return [];
+}
+/* 正解を 表示用のマークアップにする */
+function answerText(q) {
+  const kind = q.input || 'form';
+  if (kind === 'form') return fillForm(q.form, q.answers);
+  if (kind === 'ineq') return solMarkup(q.sol, q.solVar);
+  if (kind === 'order') return q.order.map(function (_, i) { return KANA[q.orderShow.indexOf(i)]; }).join(' → ');
+  return q.choice.map(function (c, i) { return c.ok ? CNUM[i] + ' ' + c.text : null; }).filter(function (x) { return x; }).join('、 ');
+}
 
 /* ===== 4. ダンジョン生成 ===== */
 const T = { WALL: 0, FLOOR: 1, NEXT: 2, BACK: 3, CHEST: 4, BOSS: 5, SEAL: 6, HIDDEN: 7, WARP: 8 };
@@ -397,19 +794,62 @@ function buildQuestion(course, ref, R) {
   q.text = q.text || 'つぎの値を求めよ。';
   q.keys = q.keys || []; q.mistakes = q.mistakes || []; q.explain = q.explain || [];
   q.hint = q.hint || '使う公式を 思い出そう';
+  /* 入力の種類: choices → 選ぶ(毎回 並べ替える)/ order → 並べ替え / sol → 不等式 / それ以外 → 空欄 */
+  if (Array.isArray(q.choices)) {
+    const items = q.choices.map(function (c) { return typeof c === 'string' ? { text: c } : Object.assign({}, c); });
+    if (!items.some(function (c) { return c.ok; }) && items.length) items[0].ok = true;          // ok の印がなければ 1つ目が正解
+    items.forEach(function (c) { c.ok = !!c.ok; });
+    q.multi = !!q.multi || items.filter(function (c) { return c.ok; }).length > 1;
+    q.choice = R.shuffle(items); q.input = 'choice';
+  } else if (Array.isArray(q.order)) {
+    let perm = q.order.map(function (_, i) { return i; });
+    for (let k = 0; k < 20 && perm.every(function (x, i) { return x === i; }) && perm.length > 1; k++) perm = R.shuffle(perm);
+    if (perm.length > 1 && perm.every(function (x, i) { return x === i; })) perm.push(perm.shift());       // どうしても そろってしまうときは 1つ ずらす
+    q.orderShow = perm; q.input = 'order';                                                           // orderShow[画面の位置] = もとの番号
+  } else if (q.sol) q.input = 'ineq';
+  else q.input = 'form';
   return q;
 }
 /* 問題が 画面に出せる形か調べる。だめなら理由の文字列、よければ null */
 function checkQuestion(q) {
-  if (!q || typeof q.form !== 'string') return 'form がない';
-  const n = countBlanks(q.form);
-  if (n < 1 || !Array.isArray(q.answers) || q.answers.length !== n) return '空欄の数と 答えの数が 合わない';
-  if (!q.answers.every(function (a) { return parseValue(a); })) return '答えの書き方が 正しくない';
-  if (countBlanks(q.text) || countBlanks(q.expr || '') || countBlanks(q.hint)) return '問題文・式・ヒントに □ がある(□ は form だけ)';
+  if (!q) return '問題がない';
+  const kind = q.input || 'form';
   try {
-    mathHTML(q.text); if (q.expr !== undefined) mathHTML(q.expr); mathHTML(q.form, true); mathHTML(q.hint); mathHTML(fillForm(q.form, q.answers));
+    if (countBlanks(q.text) || countBlanks(q.expr || '') || countBlanks(q.hint)) return '問題文・式・ヒントに □ がある(□ は form だけ)';
+    if (kind === 'form') {
+      if (typeof q.form !== 'string') return 'form がない';
+      const n = countBlanks(q.form);
+      if (n < 1 || !Array.isArray(q.answers) || q.answers.length !== n) return '空欄の数と 答えの数が 合わない';
+      if (!q.answers.every(function (a) { return parseValue(a); })) return '答えの書き方が 正しくない';
+      mathHTML(q.form, true);
+      for (let i = 0; i < q.mistakes.length; i++) if (!Array.isArray(q.mistakes[i].answers) || q.mistakes[i].answers.length !== n) return '誤答の answers の数が 合わない';
+    } else if (kind === 'choice') {
+      const it = q.choice;
+      if (!Array.isArray(it) || it.length < 2 || it.length > CNUM.length) return '選択肢は 2〜12 個';
+      if (!it.every(function (c) { return c && typeof c.text === 'string' && c.text.length; })) return '選択肢の文が ない';
+      if (new Set(it.map(function (c) { return c.text; })).size !== it.length) return '同じ選択肢が ある';
+      if (!it.some(function (c) { return c.ok; }) || it.every(function (c) { return c.ok; })) return '正解と 不正解の選択肢が それぞれ 1つ以上 必要';
+      it.forEach(function (c) { mathHTML(c.text); if (c.msg) mathHTML(c.msg); });
+    } else if (kind === 'order') {
+      const n = Array.isArray(q.order) ? q.order.length : 0;
+      if (n < 3 || n > KANA.length) return '並べ替えは 3〜8 個';
+      if (!q.order.every(function (x) { return typeof x === 'string' && x.length; }) || new Set(q.order).size !== n) return '並べ替えの文が 空か 重なっている';
+      if (!Array.isArray(q.orderShow) || q.orderShow.slice().sort().join() !== q.order.map(function (_, i) { return i; }).join() || q.orderShow.every(function (x, i) { return x === i; })) return '並べ替えの 表示順が おかしい';
+      q.order.forEach(function (x) { mathHTML(x); });
+      for (let i = 0; i < q.mistakes.length; i++) { const o = q.mistakes[i].order; if (!Array.isArray(o) || o.slice().sort().join() !== q.orderShow.slice().sort().join()) return '誤答の order が おかしい'; }
+    } else if (kind === 'ineq') {
+      const sl = q.sol, n = SHAPES[sl.kind];
+      if (n === undefined) return '不等式の形が ちがう: ' + sl.kind;
+      const vals = [sl.a, sl.b].slice(0, n).map(function (x) { return typeof x === 'string' ? parseValue(x) : null; });
+      if (!vals.every(function (x) { return x && !x.sym; })) return '不等式の答えの値が 正しくない';
+      if (n === 2 && !(vals[0].num < vals[1].num)) return '不等式の答えは a < b の順に書く';
+      if (q.shapes && (q.shapes.indexOf(sl.kind) < 0 || !q.shapes.every(function (k) { return SHAPES[k] !== undefined; }))) return 'shapes に 正解の形が ない';
+      for (let i = 0; i < q.mistakes.length; i++) if (!q.mistakes[i].sol || SHAPES[q.mistakes[i].sol.kind] === undefined) return '誤答の sol が おかしい';
+    } else return '入力の種類が ちがう: ' + kind;
+    mathHTML(q.text); if (q.expr !== undefined) mathHTML(q.expr); mathHTML(q.hint); mathHTML(answerText(q));
+    if (q.fig) figureSVG(q.fig);
     q.explain.forEach(function (l) { mathHTML(l); });
-    q.mistakes.forEach(function (m) { mathHTML(m.msg); if (!Array.isArray(m.answers) || m.answers.length !== n) throw new Error('誤答の answers'); });
+    q.mistakes.forEach(function (m) { mathHTML(m.msg); });
   } catch (e) { return e.message; }
   return null;
 }
@@ -550,6 +990,9 @@ M.util = { makeRng: makeRng, gcd: gcd, parseValue: parseValue, judge: judge, mis
   parseMarkup: parseMarkup, mathHTML: mathHTML, countBlanks: countBlanks, am: answerMarkup, answerMarkup: answerMarkup, fillForm: fillForm };
 M.dungeon = { T: T, isSolid: isSolid, bfs: bfs, genFloor: genFloor, safeFloor: safeFloor, floorSeed: floorSeed, bossRoom: bossRoom };
 M.checkQuestion = checkQuestion; M.safeQuestion = safeQuestion;
+M.figure = { svg: figureSVG, niceAxis: niceAxis }; M.geo = geo; M.solids = solids;
+M.judgeAny = judgeAny; M.correctInput = correctInput; M.wrongInput = wrongInput; M.answerText = answerText;
+M.sol = { markup: solMarkup, contains: solContains, shapes: SHAPE_ORDER };
 M.path = { find: findPath }; M.MOVE_MS = MOVE_MS;
 M.rules = rules; M.JOBS = JOBS; M.buildQuestion = buildQuestion; M.bossIds = bossIds;
 M.password = { encode: pwEncode, decode: pwDecode, alphabet: PW };
@@ -1185,11 +1628,11 @@ M.start = function (courseId, mount) {
     const pct = Math.max(0, Math.round(bt.hp / bt.max * 100));
     $('ename').innerHTML = '<span>' + escH(bt.name) + '</span>' + (bt.E.boss || bt.max > rules.atk(bt.E.level) ? '<i class="bar"><b style="width:' + pct + '%"></b></i>' : '');
   }
-  function qHTML(q, withForm) {
-    return '<div class="q"><div class="qt">' + mathHTML(q.text) + '</div>' + (q.expr ? '<div class="qe">' + mathHTML(q.expr) + '</div>' : '') +
-      (withForm ? '<div class="qf">' + mathHTML(q.form, true) + '</div>' : '') + (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '<div class="qn"></div></div>';
+  function qHTML(q, body) {
+    return '<div class="q"><div class="qt">' + mathHTML(q.text) + '</div>' + (q.fig ? '<div class="qfig">' + figureSVG(q.fig) + '</div>' : '') + (q.expr ? '<div class="qe">' + mathHTML(q.expr) + '</div>' : '') +
+      (body || '') + (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '<div class="qn"></div></div>';
   }
-  const KEYLABEL = { '-': '−', '⌫': '⌫', '分数': '<span class="mf"><span class="mn">□</span><span class="md">□</span></span>', '+': '＋', '<': '＜', '>': '＞', hint: '💡ヒント', back: 'もどる' };
+  const KEYLABEL = { '-': '−', '⌫': '⌫', '分数': '<span class="mf"><span class="mn">□</span><span class="md">□</span></span>', '+': '＋', '<': '＜', '>': '＞', '≦': '＜⇄≦', '.': '.', hint: '💡ヒント', back: 'もどる', undo: '1つ もどす' };
   function partHTML(s) {
     if (s === '') return '&nbsp;';
     if (s === '+' || s === '<' || s === '>') return KEYLABEL[s];
@@ -1198,16 +1641,41 @@ M.start = function (courseId, mount) {
   }
   /* 答えの入力。もどり値: { judge, raws } / null(もどる) */
   let autoAnswer = null;
+  /* 答えの入力。問題の種類(q.input)で 画面が変わる: form(空欄)/ choice(選ぶ)/ order(並べ替え)/ ineq(不等式の形+空欄)
+     もどり値: { judge } / null(もどる) */
   function askAnswer(q, b, prefill) {
     if (autoAnswer) return Promise.resolve(autoAnswer(q));
     return new Promise(function (res) {
-      const n = countBlanks(q.form), cells = [];
-      for (let i = 0; i < n; i++) cells.push({ num: '', den: null, part: 'num' });
-      if (prefill) prefill.forEach(function (raw, i) { const p = raw.split('/'); cells[i].num = p[0]; if (p.length > 1) cells[i].den = p[1]; });
-      let act = 0, note = '';
+      const kind = q.input || 'form', vn = q.solVar || 'x', shapes = q.shapes || SHAPE_ORDER;
+      let cells = [], act = 0, note = '', picked = [], shape = null, eq = false;
+      function setCells(n) { cells = []; for (let i = 0; i < n; i++) cells.push({ num: '', den: null, part: 'num' }); act = 0; }
+      function fillCells(raws) { raws.forEach(function (rw, i) { if (!cells[i]) return; const p = String(rw).split('/'); cells[i].num = p[0]; cells[i].den = p.length > 1 ? p[1] : null; cells[i].part = 'num'; }); }
+      if (kind === 'form') { setCells(countBlanks(q.form)); if (prefill) fillCells(prefill); }
       function raw(c) { return c.den !== null ? c.num + '/' + c.den : c.num; }
+      function body() {
+        if (kind === 'choice') {
+          return '<div class="qs">' + (q.multi ? 'あてはまるものを すべて えらんで「けってい」' : '1つ えらんで「けってい」') + '</div><div class="opts' + (q.cols ? ' c' + q.cols : '') + '">' + q.choice.map(function (c, i) {
+            return '<button class="opt' + (picked.indexOf(i) >= 0 ? ' sel' : '') + '" data-o="' + i + '"><b>' + CNUM[i] + '</b><span>' + mathHTML(c.text) + '</span></button>';
+          }).join('') + '</div>';
+        }
+        if (kind === 'order') {
+          return '<div class="qs">正しい順に タップして「けってい」</div><div class="seq">' + q.order.map(function (_, k) {
+            return '<i class="' + (k < picked.length ? 'on' : '') + '">' + (k < picked.length ? KANA[q.orderShow.indexOf(picked[k])] : '&nbsp;') + '</i>';
+          }).join('<s>→</s>') + '</div><div class="opts">' + q.orderShow.map(function (oi, i) {
+            return '<button class="opt' + (picked.indexOf(oi) >= 0 ? ' used' : '') + '" data-o="' + i + '"><b>' + KANA[i] + '</b><span>' + mathHTML(q.order[oi]) + '</span></button>';
+          }).join('') + '</div>';
+        }
+        if (kind === 'ineq') {
+          return '<div class="qs">答えの形を えらんで、空欄を うめる(＜ と ≦ は「＜⇄≦」キーで 切りかえ)</div><div class="shapes">' + shapes.map(function (k) {
+            return '<button class="shape' + (k === shape ? ' sel' : '') + '" data-s="' + k + '">' + mathHTML(shapeMarkup(k, false, vn, '□', '□')) + '</button>';
+          }).join('') + '</div>' + (shape ? '<div class="qf">' + mathHTML(shapeMarkup(shape, eq, vn, '□', '□'), true) + '</div>' : '');
+        }
+        return '<div class="qf">' + mathHTML(q.form, true) + '</div>';
+      }
       function render() {
-        showMsg(qHTML(q, true));
+        const st = msgEl.scrollTop;
+        showMsg(qHTML(q, body()));
+        msgEl.scrollTop = st;                               // 選択肢をタップしても 表示位置が 上へ もどらないように
         msgEl.querySelector('.qn').textContent = note;
         Array.from(msgEl.querySelectorAll('.qf .blank')).forEach(function (el, i) {      // 空欄は「答えの形」の中だけ
           const c = cells[i], on = i === act;
@@ -1220,64 +1688,104 @@ M.start = function (courseId, mount) {
           } else el.innerHTML = partHTML(c.num);
         });
       }
+      function pick(i) {
+        if (kind === 'choice') {
+          if (!q.choice[i]) return;
+          if (q.multi) { const k = picked.indexOf(i); if (k >= 0) picked.splice(k, 1); else picked.push(i); } else picked = [i];
+        } else if (kind === 'order') {
+          const oi = q.orderShow[i]; if (oi === undefined) return;
+          const k = picked.indexOf(oi);
+          if (k < 0) picked.push(oi); else if (k === picked.length - 1) picked.pop();      // 最後に えらんだものは もう一度タップで 取り消し
+        } else return;
+        note = ''; sfx('cursor'); render();
+      }
+      function setShape(k) { if (kind !== 'ineq' || shapes.indexOf(k) < 0) return; shape = k; setCells(SHAPES[k]); note = ''; sfx('cursor'); render(); }
       msgEl.onclick = function (e) {
-        const bl = e.target.closest('.blank'); if (!bl) return;
+        const o = e.target.closest('.opt'), sh = e.target.closest('.shape'), bl = e.target.closest('.blank');
+        if (o) return pick(parseInt(o.getAttribute('data-o'), 10));
+        if (sh) return setShape(sh.getAttribute('data-s'));
+        if (!bl || !bl.closest('.qf')) return;
         act = parseInt(bl.getAttribute('data-i'), 10);
-        const bp = e.target.closest('.bp'); if (bp && cells[act].den !== null) cells[act].part = bp.getAttribute('data-p');
+        const bp = e.target.closest('.bp'); if (bp && cells[act] && cells[act].den !== null) cells[act].part = bp.getAttribute('data-p');
         note = ''; render();
       };
       function finish(v) { msgEl.onclick = null; keysEl.onpointerdown = null; keysEl.className = ''; padEl.style.display = ''; modal = null; res(v); }
+      function submit() {
+        if (kind === 'choice') { if (!picked.length) { note = 'えらんでから 決定しよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
+        if (kind === 'order') { if (picked.length < q.order.length) { note = 'すべてを 順に タップしよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
+        if (kind === 'ineq' && !shape) { note = '先に 答えの形を えらぼう'; return render(); }
+        for (let i = 0; i < cells.length; i++) {
+          const cc = cells[i];
+          if (cc.num === '' || (cc.num === '-' && cc.den !== null) || cc.den === '') { act = i; cc.part = cc.num === '' || cc.num === '-' ? 'num' : 'den'; note = 'あいている ところが あるよ'; return render(); }
+        }
+        const raws = cells.map(raw), j = judgeAny(q, kind === 'form' ? raws : { kind: shape, eq: eq, raws: raws });
+        if (j.result === 'invalid') { act = Math.min(j.index, Math.max(0, cells.length - 1)); note = '書き方を たしかめよう(例:2√3、5π、0.5、− は先頭)'; return render(); }
+        if (j.result === 'unsimplified') { note = '値は 合っている! 約分・有理化して、最も簡単な形に 直そう'; sfx('cursor'); return render(); }
+        return finish({ judge: j });
+      }
       function key(k) {
-        const c = cells[act], p = c.part, v = c[p]; note = '';
-        if (/^\d$/.test(k)) { if (c.num === '+' || c.num === '<' || c.num === '>') c.num = ''; if (c[p].length < 6 && c[p].slice(-1) !== 'π') c[p] += k; }
-        else if (k === '-') { if (p === 'num' && (v === '' || SYMS[v])) c.num = v === '-' ? '' : '-'; }
-        else if (k === '√') { if (SYMS[v] && v !== '-') c[p] = '√'; else if (v.indexOf('√') < 0 && v.indexOf('π') < 0 && v.length < 5) c[p] += '√'; }
-        else if (k === 'π') { if (v.indexOf('π') < 0 && v.slice(-1) !== '√' && !(SYMS[v] && v !== '-')) c[p] += 'π'; }
-        else if (k === '分数') { if (c.den === null) { if (SYMS[c.num] && c.num !== '-') c.num = ''; c.den = ''; c.part = c.num === '' || c.num === '-' ? 'num' : 'den'; } else if (c.den === '') { c.den = null; c.part = 'num'; } }
-        else if (k === '+' || k === '<' || k === '>') { c.num = k; c.den = null; c.part = 'num'; }
-        else if (k === '⌫') { if (v.length) c[p] = v.slice(0, -1); else if (p === 'den') { c.den = null; c.part = 'num'; } else if (c.den === '') c.den = null; }
-        else if (k === 'next') { if (c.den !== null && p === 'num') c.part = 'den'; else { act = (act + 1) % n; } }
-        else if (k === 'back') return finish(null);
-        else if (k === 'hint') {
-          if (q.hintShown) note = 'ヒントは 上に 出ているよ';
+        note = '';
+        if (k === 'back') return finish(null);
+        if (k === 'ok') return submit();
+        if (k === 'hint') {
+          if (q.hintShown) note = 'ヒントは 出ているよ';
           else if (b.hints <= 0) note = 'ひらめきは もう 使えない!';
           else { b.hints--; q.hintShown = true; sfx('chest'); }
-        } else if (k === 'ok') {
-          for (let i = 0; i < n; i++) {
-            const cc = cells[i];
-            if (cc.num === '' || cc.num === '-' && cc.den !== null || cc.den === '') { if (cc.num === '-' && cc.den === null) continue; act = i; cc.part = cc.num === '' ? 'num' : 'den'; note = 'あいている ところが あるよ'; return render(); }
-          }
-          const raws = cells.map(raw), j = judge(q, raws);
-          if (j.result === 'invalid') { act = j.index; note = '書き方を たしかめよう(例:2√3、5π、− は先頭)'; return render(); }
-          if (j.result === 'unsimplified') { note = '値は 合っている! 約分・有理化して、最も簡単な形に 直そう'; sfx('cursor'); return render(); }
-          return finish({ judge: j, raws: raws });
+          return render();
         }
+        if (k === 'undo') { picked.pop(); sfx('cursor'); return render(); }
+        if (kind === 'choice' || kind === 'order') return;
+        if (k === '≦') { if (kind === 'ineq') eq = !eq; sfx('cursor'); return render(); }
+        const c = cells[act];
+        if (!c) { if (kind === 'ineq' && !shape) note = '先に 答えの形を えらぼう'; return render(); }
+        const p = c.part, v = c[p];
+        if (/^\d$/.test(k)) { if (c.num === '+' || c.num === '<' || c.num === '>') c.num = ''; if (c[p].length < 7 && c[p].slice(-1) !== 'π') c[p] += k; }
+        else if (k === '-') { if (p === 'num' && (v === '' || SYMS[v])) c.num = v === '-' ? '' : '-'; }
+        else if (k === '.') { if (/\d$/.test(v) && v.indexOf('.') < 0 && v.indexOf('√') < 0 && v.indexOf('π') < 0 && c.den === null && v.length < 6) c[p] += '.'; }
+        else if (k === '√') { if (SYMS[v] && v !== '-') c[p] = '√'; else if (v.indexOf('√') < 0 && v.indexOf('π') < 0 && v.indexOf('.') < 0 && v.length < 5) c[p] += '√'; }
+        else if (k === 'π') { if (v.indexOf('π') < 0 && v.indexOf('.') < 0 && v.slice(-1) !== '√' && !(SYMS[v] && v !== '-')) c[p] += 'π'; }
+        else if (k === '分数') { if (c.den === null) { if (c.num.indexOf('.') >= 0) return render(); if (SYMS[c.num] && c.num !== '-') c.num = ''; c.den = ''; c.part = c.num === '' || c.num === '-' ? 'num' : 'den'; } else if (c.den === '') { c.den = null; c.part = 'num'; } }
+        else if (k === '+' || k === '<' || k === '>') { c.num = k; c.den = null; c.part = 'num'; }
+        else if (k === '⌫') { if (v.length) c[p] = v.slice(0, -1); else if (p === 'den') { c.den = null; c.part = 'num'; } else if (c.den === '') c.den = null; }
+        else if (k === 'next') { if (c.den !== null && p === 'num') c.part = 'den'; else act = (act + 1) % cells.length; }
         sfx('cursor'); render();
       }
-      const ex = q.keys.slice(0, 4);
+      const kb = function (k, cls, label) { return '<button class="k' + (cls ? ' ' + cls : '') + '" data-k="' + escH(k) + '">' + (label || KEYLABEL[k] || k) + '</button>'; };
       let h = '';
-      [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['-', '0', '⌫']].forEach(function (r, i) {
-        r.forEach(function (k) { h += '<button class="k" data-k="' + k + '">' + (KEYLABEL[k] || k) + '</button>'; });
-        h += ex[i] ? '<button class="k x" data-k="' + escH(ex[i]) + '">' + (KEYLABEL[ex[i]] || ex[i]) + '</button>' : '<span></span>';
-      });
-      h += '<button class="k f" data-k="hint">' + KEYLABEL.hint + '</button><button class="k f" data-k="back">もどる</button><button class="k ok" data-k="ok">けってい</button>';
+      if (kind === 'choice' || kind === 'order') {
+        if (kind === 'order') h += '<button class="k f wide" data-k="undo">' + KEYLABEL.undo + '</button>';
+      } else {
+        const ex = (kind === 'ineq' ? ['≦'] : []).concat(q.keys).slice(0, 4);
+        [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9'], ['-', '0', '⌫']].forEach(function (r, i) {
+          r.forEach(function (k) { h += kb(k); });
+          h += ex[i] ? kb(ex[i], 'x') : '<span></span>';
+        });
+      }
+      h += kb('hint', 'f') + kb('back', 'f') + kb('ok', 'ok', 'けってい');
       keysEl.innerHTML = h; keysEl.className = 'on'; padEl.style.display = 'none';
       keysEl.onpointerdown = function (e) { const k = e.target.closest('.k'); if (k) { e.preventDefault(); ensureAudio(); key(k.getAttribute('data-k')); } };
       modal = { noTap: true, key: function (e) {
         const k = e.key;
-        if (/^\d$/.test(k) || k === '-' || k === '+' || k === '<' || k === '>') key(k);
-        else if (k === 'Backspace') key('⌫'); else if (k === 'Enter') key('ok'); else if (k === 'Escape') key('back');
+        if ((kind === 'choice' || kind === 'order') && /^[1-9]$/.test(k)) pick(parseInt(k, 10) - 1);
+        else if (/^\d$/.test(k) || k === '-' || k === '+' || k === '<' || k === '>' || k === '.') key(k);
+        else if (k === 'Backspace') key(kind === 'order' ? 'undo' : '⌫'); else if (k === 'Enter') key('ok'); else if (k === 'Escape') key('back');
         else if (k === 'Tab' || k === 'ArrowRight' || k === 'ArrowDown') key('next');
         else if (k === '/' && q.keys.indexOf('分数') >= 0) key('分数'); else if ((k === 'r' || k === 's') && q.keys.indexOf('√') >= 0) key('√');
-        else if (k === 'p' && q.keys.indexOf('π') >= 0) key('π'); else if (k === 'h') key('hint'); else return false;
+        else if (k === 'p' && q.keys.indexOf('π') >= 0) key('π'); else if (k === 'e') key('≦'); else if (k === 'h') key('hint'); else return false;
         return true;
-      } };
+      },
+      /* 動作確認用(&debug=): 画面の部品を 直接 操作する */
+      dev: { pick: pick, shape: setShape, fill: function () {
+        const ci = correctInput(q);
+        if (kind === 'choice' || kind === 'order') picked = ci.slice(); else if (kind === 'ineq') { shape = ci.kind; eq = ci.eq; setCells(SHAPES[shape]); fillCells(ci.raws); } else fillCells(ci);
+        render();
+      } } };
       render();
     });
   }
   function showExplain(q) {
     return new Promise(function (res) {
-      showMsg('<div class="ex"><div class="exa">こたえ <span class="exf">' + mathHTML(fillForm(q.form, q.answers)) + '</span></div>' +
+      showMsg('<div class="ex"><div class="exa">こたえ <span class="exf">' + mathHTML(answerText(q)) + '</span></div>' +
         q.explain.map(function (l) { return '<div class="exl">' + mathHTML(l) + '</div>'; }).join('') + '</div><span class="more">▼</span>');
       msgEl.classList.add('done');
       const at = Date.now(), go = function () { if (Date.now() - at < 500) return; modal = null; msgEl.classList.remove('done'); res(); };
@@ -1314,7 +1822,7 @@ M.start = function (courseId, mount) {
       if (job().jest && Math.random() < 0.18) await say(JEST[Math.floor(Math.random() * JEST.length)].replace('{n}', S.name));
       let acted = false;
       while (!acted && !result) {
-        const c = await choose(['とく', 'ひらめき(のこり' + bt.hints + ')', 'どうぐ', 'にげる'], { cols: 2, cancel: false, html: qHTML(q, false) });
+        const c = await choose(['とく', 'ひらめき(のこり' + bt.hints + ')', 'どうぐ', 'にげる'], { cols: 2, cancel: false, html: qHTML(q, '') });
         if (c === 0) {
           const r = await askAnswer(q, bt);
           if (!r) continue;
@@ -1543,11 +2051,15 @@ M.start = function (courseId, mount) {
       mode = 'battle'; setStage('battle'); enameUpdate();
       const q = buildQuestion(course, a[1], makeRng(parseInt(a[2] || '1', 10)));
       q.hintShown = true;
-      if (a[0] === 'ask') askAnswer(q, bt, q.answers); else showExplain(q);
+      if (a[0] === 'ask') { askAnswer(q, bt, q.answers); if (q.input !== 'form' && params.get('fill') !== '0') modal.dev.fill(); } else showExplain(q);
     } else if (a[0] === 'dun') {
       S.dun = { id: a[1], floor: parseInt(a[2] || '0', 10), seed: 12345, opened: {}, ret: course.start, x: 0, y: 0 };
       cur = dungeonMap(); setPos(cur.floor.start.x, cur.floor.start.y);
-    } else if (a[0] === 'world') { S.pos = { map: 'world', x: course.maps.town.legend ? 16 : 16, y: 13 }; loadMap(); }
+    } else if (a[0] === 'world') {            // はじめのマップの出口の先(外の世界)へ
+      const lg = Object.assign({}, M.BASE_LEGEND, course.legend || {}, course.maps[course.start.map].legend || {});
+      const ex = Object.keys(lg).map(function (k) { return lg[k].event; }).filter(function (e) { return e && e.type === 'map'; })[0];
+      if (ex) { S.pos = { map: ex.map, x: ex.x, y: ex.y }; loadMap(); }
+    }
     else if (a[0] === 'status') { S.flags['boss:' + bossIds(course)[0]] = 1; S.titles = [course.titles.special[0].id]; S.title = S.titles[0]; statusScreen(); }
     else if (a[0] === 'create') createScreen({}, false);
     else if (a[0] === 'auto') {
@@ -1557,53 +2069,87 @@ M.start = function (courseId, mount) {
       window.addEventListener('unhandledrejection', function (e) { log.push('REJECT ' + (e.reason && e.reason.stack || e.reason)); });
       autoAnswer = function (q) {
         const wrong = wrongMode === 1 || (wrongMode === 2 && Math.random() < 0.5);
-        const m = q.mistakes[0], raws = !wrong ? q.answers : m ? m.answers.map(function (x, i) { return x === '*' ? q.answers[i] : x; }) : q.answers.map(function () { return '9999'; });
-        return { judge: judge(q, raws), raws: raws };
+        return { judge: judgeAny(q, wrong ? wrongInput(q) : correctInput(q)) };
       };
       setInterval(function () { if (modal && modal.A) modal.A(); }, 5);
+      /* どのコースでも動くように、行き先・敵・ダンジョンは コースのデータから 探す */
+      const bosses = bossIds(course), firstDun = Object.keys(course.dungeons).filter(function (d) { return !course.dungeons[d].need; })[0];
       try {
         /* 画面の更新回数で待つ(ヘッドレスでは 時間の進み方が ちがうため) */
         const frames = function (n, until) { return new Promise(function (res) { (function f() { updateMap(16); if (--n <= 0 || (until && until())) res(n); else setTimeout(f, 1); })(); }); };
         const idle = function () { return !route && !P.moving && !busy; };
-        let moved = 0;
-        tapTile(12, 8); const mark = JSON.stringify(route && route.mark), steps = route.path.length;
-        await frames(3000, function () { moved++; return idle(); });
-        log.push('タップ移動 (7,9)→(12,8): ' + steps + '歩 印=' + mark + ' → 着いた位置 ' + P.x + ',' + P.y + ' / 1歩あたり ' + Math.round(moved * 16 / steps) + 'ms(設定 ' + MOVE_MS + ')');
-        tapTile(1, 1); await frames(40); const mid = P.x + ',' + P.y; tapTile(2, 7); await frames(6000, function () { return idle() && P.x <= 3; });
-        log.push('途中(' + mid + ')で行き先変更 → 町の人(2,7)をタップ: 位置 ' + P.x + ',' + P.y + ' 向き=' + P.dir + '(話しかけて 会話が終わった)');
-        tapTile(7, 12); await frames(6000, idle); log.push('通れない木(7,12)をタップ → いちばん近いマスへ: map=' + S.pos.map + ' ' + P.x + ',' + P.y);
+        let far = null, npc = null, wall = null, fd = -1;
+        const dist = {}, queue = [[P.x, P.y]]; dist[P.x + ',' + P.y] = 0;
+        for (let k = 0; k < queue.length; k++) {
+          const x = queue[k][0], y = queue[k][1], d0 = dist[x + ',' + y], c0 = cur.cell(x, y);
+          if (d0 > fd && !c0.event) { fd = d0; far = { x: x, y: y }; }
+          if (k > 0 && c0.event) continue;
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (dv) {
+            const nx = x + dv[0], ny = y + dv[1], c = cur.cell(nx, ny); if (!c) return;
+            if (c.solid) { if (c.event && c.event.type === 'talk') npc = npc || { x: nx, y: ny }; else if (!c.event) wall = wall || { x: nx, y: ny }; return; }
+            if (dist[nx + ',' + ny] === undefined) { dist[nx + ',' + ny] = d0 + 1; queue.push([nx, ny]); }
+          });
+        }
+        let moved = 0; const from = P.x + ',' + P.y;
+        tapTile(far.x, far.y); const mark = JSON.stringify(route && route.mark), steps = route.path.length;
+        await frames(4000, function () { moved++; return idle(); });
+        log.push('タップ移動 (' + from + ')→(' + far.x + ',' + far.y + '): ' + steps + '歩 印=' + mark + ' → 着いた位置 ' + P.x + ',' + P.y + ' / 1歩あたり ' + Math.round(moved * 16 / steps) + 'ms(設定 ' + MOVE_MS + ')');
+        if (npc) {
+          tapTile(course.start.x, course.start.y); await frames(40); const mid = P.x + ',' + P.y; tapTile(npc.x, npc.y);
+          await frames(8000, function () { return idle() && Math.abs(P.x - npc.x) + Math.abs(P.y - npc.y) === 1; });
+          log.push('途中(' + mid + ')で行き先変更 → 町の人(' + npc.x + ',' + npc.y + ')をタップ: 位置 ' + P.x + ',' + P.y + ' 向き=' + P.dir + ' となり=' + (Math.abs(P.x - npc.x) + Math.abs(P.y - npc.y) === 1));
+        }
+        if (wall) { tapTile(wall.x, wall.y); await frames(6000, idle); log.push('通れないマス(' + wall.x + ',' + wall.y + ')をタップ → いちばん近いマスへ: ' + P.x + ',' + P.y + ' 通れる=' + !cur.cell(P.x, P.y).solid); }
         S.pos = Object.assign({}, course.start); loadMap();
       } catch (e) { log.push('EXCEPTION ' + (e.stack || e)); }
       busy = true;
       try {
-        S.lv = 8; S.hp = maxHp(); log.push('boss kahou Lv8 全問正解 → ' + await battle('kahou') + ' / Lv' + S.lv + ' flag=' + S.flags['boss:kahou'] + ' titles=' + S.titles.join(','));
-        S.lv = 30; S.hp = maxHp(); log.push('maou Lv30 → ' + await battle('maou') + ' / Lv' + S.lv + ' cap=' + rules.levelCap(course, S.flags) + ' combo=' + S.stats.maxCombo + ' titles=' + S.titles.join(','));
-        wrongMode = 1; S.lv = 3; S.hp = maxHp(); S.gold = 100; S.dun = { id: 'tower', floor: 1, seed: 5, opened: {}, ret: course.start, x: 3, y: 3 };
-        log.push('harmo Lv3 全問不正解 → ' + await battle('harmo') + ' / gold=' + S.gold + ' hp=' + S.hp + ' dun=' + S.dun + ' pos=' + JSON.stringify(S.pos) + ' mistakes=' + JSON.stringify(S.stats.mistakes));
-        wrongMode = 2; for (const e of Object.keys(course.enemies)) { if (course.enemies[e].boss) continue; S.lv = course.enemies[e].level + 2; S.hp = maxHp(); log.push(e + ' → ' + await battle(e)); }
-        /* 本物の入力画面で、全部の型の正解を キーで打って 決定する(入力画面が止まらないかの確認) */
-        const auto0 = autoAnswer; autoAnswer = null; let uiOk = 0; const uiNg = [];
+        for (const bid of bosses) {
+          const B = course.enemies[bid];
+          S.lv = B.level + 2; S.hp = maxHp(); wrongMode = 0;
+          log.push('ボス ' + bid + ' Lv' + S.lv + ' 全問正解 → ' + await battle(bid) + ' / Lv' + S.lv + ' flag=' + S.flags['boss:' + bid] + (B.phase2 ? '(変身あり)' : '') + ' 上限Lv=' + rules.levelCap(course, S.flags));
+        }
+        log.push('称号=' + S.titles.join(',') + ' 最大コンボ=' + S.stats.maxCombo);
+        wrongMode = 1; S.lv = Math.max(1, course.enemies[bosses[0]].level - 3); S.hp = maxHp(); S.gold = 100;
+        if (firstDun) S.dun = { id: firstDun, floor: 0, seed: 5, opened: {}, ret: course.start, x: 3, y: 3 };
+        log.push('ボス ' + bosses[0] + ' Lv' + S.lv + ' 全問不正解 → ' + await battle(bosses[0]) + ' / gold=' + S.gold + ' hp=' + S.hp + ' dun=' + S.dun + ' pos=' + JSON.stringify(S.pos) + ' mistakes=' + JSON.stringify(S.stats.mistakes));
+        wrongMode = 2; const zr = [];
+        for (const e of Object.keys(course.enemies)) { if (course.enemies[e].boss) continue; S.lv = course.enemies[e].level + 2; S.hp = maxHp(); zr.push(e + ':' + await battle(e)); }
+        log.push('ザコ ' + zr.length + ' 体(正解と不正解を まぜる)→ ' + zr.join(' '));
+        /* 本物の入力画面で、全部の型の正解を 入力して 決定する(入力画面が止まらないかの確認) */
+        const auto0 = autoAnswer; autoAnswer = null; let uiOk = 0; const uiNg = [], byKind = {};
         for (const tid of Object.keys(course.types)) {
           for (let sd = 1; sd <= 12; sd++) {
             try {
               const q = buildQuestion(course, tid, makeRng(sd * 977 + 5)), pr = askAnswer(q, { hints: 1 });
-              q.answers.forEach(function (raw, bi) {
-                if (bi) modal.key({ key: 'Tab' });
-                Array.from(raw).forEach(function (chr) { modal.key({ key: chr === '√' ? 'r' : chr === 'π' ? 'p' : chr }); });
-              });
+              const ci = correctInput(q);
+              if (q.input === 'choice') ci.forEach(function (i) { msgEl.querySelectorAll('.opt')[i].click(); });                        // 画面の選択肢を 実際に クリック
+              else if (q.input === 'order') ci.forEach(function (i) { msgEl.querySelectorAll('.opt')[q.orderShow.indexOf(i)].click(); });
+              else {
+                if (q.input === 'ineq') { msgEl.querySelector('.shape[data-s="' + ci.kind + '"]').click(); if (ci.eq) modal.key({ key: 'e' }); }
+                (q.input === 'ineq' ? ci.raws : ci).forEach(function (raw, bi) {
+                  if (bi) modal.key({ key: 'Tab' });
+                  Array.from(raw).forEach(function (chr) { modal.key({ key: chr === '√' ? 'r' : chr === 'π' ? 'p' : chr }); });
+                });
+              }
               modal.key({ key: 'h' }); modal.key({ key: 'Enter' });
               const r = await Promise.race([pr, wait(200).then(function () { return null; })]);
-              if (r && r.judge.result === 'correct') uiOk++; else { uiNg.push(tid + '#' + sd); if (modal && modal.key) modal.key({ key: 'Escape' }); }
+              if (r && r.judge.result === 'correct') { uiOk++; byKind[q.input] = (byKind[q.input] || 0) + 1; } else { uiNg.push(tid + '#' + sd); if (modal && modal.key) modal.key({ key: 'Escape' }); }
             } catch (e) { uiNg.push(tid + '#' + sd + '(' + e.message + ')'); recover(false); mode = 'map'; }
           }
         }
         autoAnswer = auto0;
-        log.push('入力画面で 全型の正解を キー入力 → 正解 ' + uiOk + ' 問 / 失敗 ' + (uiNg.length ? uiNg.join(', ') : 'なし'));
+        log.push('入力画面で 全型の正解を 入力 → 正解 ' + uiOk + ' 問 ' + JSON.stringify(byKind) + ' / 失敗 ' + (uiNg.length ? uiNg.join(', ') : 'なし'));
         S.dun = { id: 'nai', floor: 9, seed: 1, opened: null, x: -5, y: 99 }; loadMap(); log.push('こわれた再開データ(ない ダンジョン)→ dun=' + S.dun + ' map=' + S.pos.map);
-        S.dun = { id: 'cave', floor: 0, seed: 77, opened: {}, x: 0, y: 0, ret: course.start }; loadMap(); log.push('こわれた再開データ(壁の中)→ 階段へ ' + P.x + ',' + P.y + ' = ' + JSON.stringify(cur.floor.start)); S.dun = null; loadMap();
-        wrongMode = 0; await enterDungeon('cave', course.start); log.push('cave に入る → floor=' + (S.dun && S.dun.floor) + ' 位置=' + P.x + ',' + P.y);
-        await gotoFloor(1, 'start'); await gotoFloor(2, 'start'); log.push('ボス部屋 isBoss=' + cur.isBoss + ' 隠し通路=' + cur.cell(6, 1).k);
-        await openChest(); await inn(); await church(); log.push('宿屋・教会 OK hp=' + S.hp);
+        if (firstDun) {
+          const nf = course.dungeons[firstDun].floors.length;
+          S.dun = { id: firstDun, floor: 0, seed: 77, opened: {}, x: 0, y: 0, ret: course.start }; loadMap(); log.push('こわれた再開データ(壁の中)→ 階段へ ' + P.x + ',' + P.y + ' = ' + JSON.stringify(cur.floor.start)); S.dun = null; loadMap();
+          wrongMode = 0; await enterDungeon(firstDun, course.start); log.push(firstDun + ' に入る → floor=' + (S.dun && S.dun.floor) + ' 位置=' + P.x + ',' + P.y);
+          for (let fl = 1; fl <= nf; fl++) await gotoFloor(fl, 'start');
+          log.push('ボス部屋 isBoss=' + cur.isBoss + ' 奥のマス=' + (cur.cell(6, 1).k || 'かべ'));
+          await openChest();
+        }
+        await inn(); await church(); log.push('宿屋・教会 OK hp=' + S.hp);
         const st = pwDecode(course, pwEncode(course, S)); log.push('記録のことば → ' + (st && st.name + ' Lv' + st.lv));
         log.push('review=' + S.review.join(',') + ' / 完了');
       } catch (e) { log.push('EXCEPTION ' + (e.stack || e)); }

@@ -1,7 +1,7 @@
 /* ============================================================
  * tests/check.js — 自動テスト     実行: node tests/check.js
  *   0. 止まらないこと(別プロセスで 型ごとに 20000 問・階ごとに 2000 回。時間切れなら 場所を報告)
- *   1. エンジンの判定・数式表示・記録のことば・こわれたデータへの そなえ
+ *   1. エンジンの判定・数式表示・図(SVG)・新しい入力(選ぶ/並べ替え/不等式/小数)・記録のことば・こわれたデータへの そなえ
  *   2. すべての問題の型(各 400 問): 正解・表示・誤答データ
  *   3. ダンジョン生成(1200 回 × 3 階)と 隠し通路
  *   4. コースのデータ(マップ・敵・ドット絵・称号・強さのバランス)
@@ -96,6 +96,20 @@ function renderOk(label, src, withBlanks) {
   const e = htmlOk(html);
   return ok(!e, label + '「' + src + '」: ' + e);
 }
+/* 図(SVG)が くずれていないか: タグの対応、NaN など、枠の外への はみ出し */
+function figOk(svg) {
+  if (typeof svg !== 'string') return '図が 作れない';
+  const e = htmlOk(svg); if (e) return e;
+  if (/NaN|Infinity/.test(svg)) return '図に 計算できない数がある';
+  const vb = /viewBox="0 0 ([\d.]+) ([\d.]+)"/.exec(svg); if (!vb) return 'viewBox がない';
+  const W = +vb[1], H = +vb[2]; let bad = null;
+  if (!(W === 300 && H >= 20 && H <= 260)) return '図の大きさが おかしい(' + W + '×' + H + ')';
+  svg.replace(/ (x|x1|x2|cx|y|y1|y2|cy)="(-?[\d.]+)"/g, function (m, k, v) { const lim = /y/.test(k) ? H : W; if (+v < -1 || +v > lim + 1) bad = k + '=' + v; return m; });
+  svg.replace(/ points="([^"]*)"/g, function (m, list) { list.split(' ').forEach(function (pr) { const q = pr.split(','); if (+q[0] < -1 || +q[0] > W + 1 || +q[1] < -1 || +q[1] > H + 1) bad = 'points ' + pr; }); return m; });
+  return bad ? '図が 枠の外に はみ出している(' + bad + ')' : null;
+}
+/* 順列を すべて作る */
+function perms(n) { const out = []; (function rec(rest, acc) { if (!rest.length) return out.push(acc); rest.forEach((x, i) => rec(rest.slice(0, i).concat(rest.slice(i + 1)), acc.concat([x]))); })(Array.from({ length: n }, (_, i) => i), []); return out; }
 /* その答えを キーで打てるか */
 function typeable(raw, keys) {
   if (raw === '*') return true;
@@ -104,7 +118,8 @@ function typeable(raw, keys) {
   if (raw.indexOf('/') >= 0 && keys.indexOf('分数') < 0) return false;
   if (raw.indexOf('√') >= 0 && keys.indexOf('√') < 0) return false;
   if (raw.indexOf('π') >= 0 && keys.indexOf('π') < 0) return false;
-  return raw.split('/').every(p => p.length >= 1 && p.length <= 6) && /^[-0-9√π/]+$/.test(raw);
+  if (raw.indexOf('.') >= 0 && keys.indexOf('.') < 0) return false;
+  return raw.split('/').every(p => p.length >= 1 && p.length <= 6) && /^[-0-9√π/.]+$/.test(raw);
 }
 
 /* ---------- 0. 止まらないこと・時間がかかりすぎないこと(最初に行う) ---------- */
@@ -183,6 +198,124 @@ section('エンジン: 数式の表示');
   let threw = false; try { U.mathHTML('{1/2'); } catch (e) { threw = true; } ok(threw, '} の不足は エラーにする');
 })();
 
+section('エンジン: 小数・選ぶ・並べ替え・不等式の答え');
+(function () {
+  ok(U.judge({ answers: ['7.5'] }, ['7.5']).result === 'correct' && U.judge({ answers: ['-0.87'] }, ['-0.87']).result === 'correct', '小数の答え');
+  ok(U.judge({ answers: ['7.5'] }, ['7.50']).result === 'correct' && U.judge({ answers: ['7.5'] }, ['7.6']).result === 'wrong', '7.50 は 7.5 と同じ、7.6 は ちがう');
+  ok(U.judge({ answers: ['0.5'] }, ['1/2']).result === 'correct' && U.judge({ answers: ['3'] }, ['3.0']).result === 'correct', '0.5 と 1/2、3 と 3.0 は 同じ値');
+  ['3.', '.5', '1.5/2', '1/2.5', '1.5√2', '1.5π', '1.2.3'].forEach(r => ok(U.parseValue(r) === null, r + ' は 書き方の誤り'));
+  ok(Math.abs(U.parseValue('-12.75').num + 12.75) < 1e-12, '小数の数値');
+  // 選ぶ
+  const qc = { input: 'choice', choice: [{ text: 'a', ok: false, tag: 't1', msg: 'm1' }, { text: 'b', ok: true }, { text: 'c', ok: false }] };
+  ok(M.judgeAny(qc, [1]).result === 'correct' && M.judgeAny(qc, [0]).mistake.tag === 't1' && M.judgeAny(qc, [2]).result === 'wrong' && !M.judgeAny(qc, [2]).mistake, '選ぶ: 正解・診断つきの誤答・診断なしの誤答');
+  ok(M.judgeAny(qc, [0, 1]).result === 'wrong' && M.judgeAny(qc, []).result === 'wrong', '選ぶ: 2つ選ぶ・何も選ばないは 不正解');
+  const qm = { input: 'choice', multi: true, choice: [{ text: 'a', ok: true }, { text: 'b', ok: false }, { text: 'c', ok: true }] };
+  ok(M.judgeAny(qm, [2, 0]).result === 'correct' && M.judgeAny(qm, [0]).mistake.tag === 'choice-missing' && M.judgeAny(qm, [0, 1, 2]).result === 'wrong', 'すべて選ぶ: 順番は問わない・足りない・多すぎる');
+  // 並べ替え
+  const qo = { input: 'order', order: ['p', 'q', 'r'], orderShow: [2, 0, 1], mistakes: [{ order: [0, 2, 1], tag: 'o', msg: 'm' }] };
+  ok(M.judgeAny(qo, [0, 1, 2]).result === 'correct' && M.judgeAny(qo, [0, 2, 1]).mistake.tag === 'o' && M.judgeAny(qo, [1, 0, 2]).result === 'wrong' && M.judgeAny(qo, [0, 1]).result === 'wrong', '並べ替えの判定');
+  ok(M.answerText(qo) === 'イ → ウ → ア', '並べ替えの正解の表示(' + M.answerText(qo) + ')');
+  // 不等式
+  const S = (kind, eq, a, b) => ({ input: 'ineq', sol: { kind: kind, eq: eq, a: a, b: b } }), I = (kind, eq, raws) => ({ kind: kind, eq: eq, raws: raws });
+  ok(M.judgeAny(S('outside', false, '1', '3'), I('outside', false, ['1', '3'])).result === 'correct', 'x<1, 3<x');
+  ok(M.judgeAny(S('outside', false, '1', '3'), I('outside', true, ['1', '3'])).result === 'wrong', '等号の有無が ちがえば 不正解');
+  ok(M.judgeAny(S('outside', false, '1', '3'), I('between', false, ['1', '3'])).result === 'wrong', '内側と外側が 逆なら 不正解');
+  ok(M.judgeAny(S('outside', false, '1', '3'), I('outside', false, ['3', '1'])).result === 'wrong', '値の順が 逆なら 不正解');
+  ok(M.judgeAny(S('between', true, '-1/2', '√3'), I('between', true, ['-1/2', '√3'])).result === 'correct', '分数・根号の入った範囲');
+  ok(M.judgeAny(S('between', true, '-1/2', '3'), I('between', true, ['-2/4', '3'])).result === 'unsimplified', '約分していない範囲は 入れ直し');
+  ok(M.judgeAny(S('all'), I('all', false, [])).result === 'correct' && M.judgeAny(S('all'), I('none', false, [])).result === 'wrong', 'すべての実数 / 解なし');
+  ok(M.judgeAny(S('except', false, '2'), I('except', false, ['2'])).result === 'correct' && M.judgeAny(S('except', false, '2'), I('outside', false, ['2', '2'])).result === 'correct', '2 以外のすべての実数 = x<2, 2<x');
+  ok(M.judgeAny(S('point', false, '2'), I('point', true, ['2'])).result === 'correct' && M.judgeAny(S('point', false, '2'), I('between', true, ['2', '2'])).result === 'correct', 'x=2 = 2≦x≦2');
+  ok(M.judgeAny(S('gt', true, '1/3'), I('gt', true, ['1/3'])).result === 'correct' && M.judgeAny(S('gt', true, '1/3'), I('lt', true, ['1/3'])).result === 'wrong', 'm≧1/3 と 向きちがい');
+  ok(M.judgeAny(S('lt', false, '1'), I('lt', false, ['√'])).result === 'invalid', '書きかけは 書き方の誤り');
+  const qi = Object.assign(S('outside', false, '1', '3'), { mistakes: [{ sol: { kind: 'between', a: '1', b: '3' }, tag: 'io', msg: 'm' }, { sol: { kind: 'all' }, tag: 'al', msg: 'm' }] });
+  ok(M.judgeAny(qi, I('between', true, ['1', '3'])).mistake.tag === 'io' && M.judgeAny(qi, I('all', false, [])).mistake.tag === 'al' && !M.judgeAny(qi, I('between', false, ['0', '3'])).mistake, '不等式の よくある誤答');
+  ok(M.sol.markup({ kind: 'outside', a: '1', b: '3' }) === 'x < 1, 3 < x' && M.sol.markup({ kind: 'between', eq: true, a: '-1/2', b: '3' }, 'm') === '-{1/2} ≦ m ≦ 3' && M.sol.markup({ kind: 'none' }) === '解なし', '不等式の表示');
+  ok(M.sol.contains({ kind: 'outside', eq: true, a: '1', b: '3' }, 1) && !M.sol.contains({ kind: 'outside', a: '1', b: '3' }, 1) && M.sol.contains({ kind: 'except', a: '2' }, 5) && !M.sol.contains({ kind: 'except', a: '2' }, 2), '範囲に入るかどうか');
+  // 問題にしたときの 並べ替え(毎回 変わる・種が同じなら同じ)
+  const fake = { types: {
+    c: { gen: () => ({ text: 't', choices: ['正解', '誤答1', '誤答2', '誤答3'], hint: 'h', explain: ['a', 'b'] }) },
+    o: { gen: () => ({ text: 't', order: ['1つ目', '2つ目', '3つ目'], hint: 'h', explain: ['a', 'b'] }) },
+    i: { gen: () => ({ text: 't', sol: { kind: 'between', a: '1', b: '3' }, hint: 'h', explain: ['a', 'b'] }) },
+    badC: { gen: () => ({ text: 't', choices: ['同じ', '同じ'], hint: 'h', explain: ['a', 'b'] }) },
+    badI: { gen: () => ({ text: 't', sol: { kind: 'between', a: '3', b: '1' }, hint: 'h', explain: ['a', 'b'] }) },
+    badF: { gen: () => ({ text: 't', form: '□', answers: ['1'], fig: { type: 'geo', items: [{ t: 'circle', c: [0, 0], r: NaN }] }, hint: 'h', explain: ['a', 'b'] }) } } };
+  const pos = {}, ord = {};
+  for (let i = 0; i < 200; i++) {
+    const c = M.buildQuestion(fake, 'c', U.makeRng(i)), o = M.buildQuestion(fake, 'o', U.makeRng(i));
+    pos[c.choice.findIndex(x => x.ok)] = 1; ord[o.orderShow.join('')] = 1;
+    ok(c.input === 'choice' && c.choice.filter(x => x.ok).length === 1 && c.choice.find(x => x.ok).text === '正解' && M.checkQuestion(c) === null, '選ぶ問題: 1つ目が正解・並べ替えても 正解は変わらない');
+    ok(o.input === 'order' && o.orderShow.join('') !== '012' && M.checkQuestion(o) === null, '並べ替え問題: はじめから 正しい順では 出さない');
+    ok(JSON.stringify(M.buildQuestion(fake, 'c', U.makeRng(i)).choice) === JSON.stringify(c.choice), '同じ種なら 同じ並び');
+  }
+  ok(Object.keys(pos).length === 4, '選択肢は 毎回 並べ替える(正解の位置が 4通り 出る)');
+  ok(Object.keys(ord).length === 5, '並べ替えの 出し方が 5通り 出る');
+  ok(M.buildQuestion(fake, 'i', U.makeRng(1)).input === 'ineq' && M.checkQuestion(M.buildQuestion(fake, 'i', U.makeRng(1))) === null, '不等式の問題');
+  ['badC', 'badI', 'badF'].forEach(b => ok(typeof M.checkQuestion(M.buildQuestion(fake, b, U.makeRng(1))) === 'string' && M.safeQuestion(fake, [b], b, () => 1) === null, 'こわれた問題(' + b + ')は 出さない'));
+})();
+
+section('エンジン: 図(SVG)');
+(function () {
+  const G = M.geo, R = U.makeRng(77), fig = f => tryDo('図 ' + f.type, () => M.figure.svg(f));
+  // 図形の計算
+  for (let i = 0; i < 300; i++) {
+    const c = [R.int(-5, 5), R.int(-5, 5)], r = R.int(1, 9), d1 = R.int(0, 359), p = G.on(c, r, d1), tl = G.tangentAt(c, p, 3, 4);
+    ok(Math.abs(G.dist(c, p) - r) < 1e-9, '円周上の点');
+    ok(Math.abs((tl[1][0] - tl[0][0]) * (p[0] - c[0]) + (tl[1][1] - tl[0][1]) * (p[1] - c[1])) < 1e-9 && Math.abs(G.dist(tl[0], p) - 3) < 1e-9 && Math.abs(G.dist(tl[1], p) - 4) < 1e-9, '接線は 半径に垂直');
+    const P = G.on(c, r + R.int(1, 9), R.int(0, 359)), tf = G.tangentFrom(c, r, P);
+    ok(tf && tf.every(t => Math.abs(G.dist(c, t) - r) < 1e-9 && Math.abs((t[0] - c[0]) * (t[0] - P[0]) + (t[1] - c[1]) * (t[1] - P[1])) < 1e-7), '外の点からの接線の接点');
+    ok(G.tangentFrom(c, r, G.on(c, r * 0.5, d1)) === null, '円の中の点からは 接線が引けない');
+    const a = G.on(c, r, d1), b = G.on(c, r, d1 + R.int(40, 140)), e = G.on(c, r, d1 + R.int(180, 320)), cc = G.circum(a, b, e);
+    ok(cc && G.dist(cc.c, c) < 1e-7 && Math.abs(cc.r - r) < 1e-7, '3点を通る円');
+    const ft = G.foot(P, a, b); ok(Math.abs((ft[0] - P[0]) * (b[0] - a[0]) + (ft[1] - P[1]) * (b[1] - a[1])) < 1e-7, '垂線の足');
+    const mt = G.meet(a, e, b, P); if (mt) ok(Math.abs((mt[0] - a[0]) * (e[1] - a[1]) - (mt[1] - a[1]) * (e[0] - a[0])) < 1e-6, '2直線の交点');
+    ok(Math.abs(G.angleDeg(c, G.on(c, 1, 10), G.on(c, 3, 10 + 73)) - 73) < 1e-9, '角の大きさ');
+  }
+  ok(G.circum([0, 0], [1, 1], [2, 2]) === null && G.meet([0, 0], [1, 1], [0, 1], [1, 2]) === null, '一直線上の3点・平行な2直線は null');
+  // 図の種類ごと(数値を ランダムに変えても くずれない)
+  for (let i = 0; i < 300; i++) {
+    const c = [R.int(-20, 20), R.int(-20, 20)], r = R.int(1, 40) / 4, A = G.on(c, r, R.int(0, 359)), B = G.on(c, r, R.int(0, 359)), P = G.on(c, r * (1.2 + R.next() * 3), R.int(0, 359)), tf = G.tangentFrom(c, r, P), tl = G.tangentAt(c, A, r, r * 1.5);
+    const svg = fig({ type: 'geo', items: [{ t: 'circle', c: c, r: r }, { t: 'seg', a: A, b: B, label: 'x', color: 'acc' }, { t: 'line', a: P, b: tf[0] }, { t: 'seg', a: P, b: tf[1], dash: true, label: R.int(1, 99), side: -1 },
+      { t: 'seg', a: tl[0], b: tl[1] }, { t: 'poly', pts: [A, B, tf[0]], fill: true }, { t: 'angle', at: P, a: tf[0], b: tf[1], label: R.int(10, 170) + '°' }, { t: 'right', at: tf[0], a: c, b: P },
+      { t: 'point', p: A, label: 'A', away: c }, { t: 'point', p: P, label: 'P', pos: 'ne' }, { t: 'point', p: c, label: 'O', dir: 200 }, { t: 'text', p: G.mid(A, B), s: 'ℓ' }] });
+    const e = figOk(svg); ok(!e, '図 geo(円・接線・弦・三角形): ' + e);
+    if (i === 0) ok((svg.match(/<circle/g) || []).length === 4 && (svg.match(/<line/g) || []).length === 4 && (svg.match(/<text/g) || []).length === 7 && svg.indexOf('stroke-dasharray') > 0, '図 geo: 部品が そろっている');
+    const a2 = R.pick([1, -1, 0.5, 2]), p2 = R.int(-3, 3), q2 = R.int(-4, 4);
+    const e2 = figOk(fig({ type: 'geo', view: [p2 - 4, -6, p2 + 4, 6], items: [{ t: 'axis', x: [p2 - 4, p2 + 4], y: [-6, 6] }, { t: 'curve', pts: G.parabola(a2, -2 * a2 * p2, a2 * p2 * p2 + q2, p2 - 4, p2 + 4), color: 'acc' }, { t: 'point', p: [p2, q2], label: '頂点', pos: q2 > 0 ? 'n' : 's' }] }));
+    ok(!e2, '図 geo(放物線と軸): ' + e2);
+    // 箱ひげ図
+    const v = [R.int(-50, 50)]; for (let k = 0; k < 4; k++) v.push(v[k] + R.int(0, 30) / 2);
+    const bs = fig({ type: 'boxplot', rows: [{ label: 'A組', v: v, out: [v[4] + R.int(1, 9)] }, { label: 'B組', v: v.map(x => x + 3) }], unit: '(点)' }), eb = figOk(bs); ok(!eb, '図 箱ひげ図: ' + eb);
+    const xs = []; bs.replace(/<rect x="([\d.]+)"[^>]*width="([\d.]+)"/g, (m, x, w) => { xs.push(+x, +x + +w); return m; });
+    ok(xs.length === 4 && xs[0] <= xs[1] + 1e-9 && Math.abs((xs[1] - xs[0]) - (xs[3] - xs[2])) < 0.3, '図 箱ひげ図: 箱の幅が Q3−Q1 に 比例する');
+    ok(!figOk(fig({ type: 'boxplot', rows: [{ v: [10, 20, 30, 45, 60] }], axis: [0, 70, 10], minor: 5 })), '図 箱ひげ図: 目盛りを 指定');
+    // 散布図・ヒストグラム・表
+    const pts = []; for (let k = R.int(1, 30); k > 0; k--) pts.push([R.int(-100, 100) / 4, R.int(0, 1000) / 7]);
+    const ss = fig({ type: 'scatter', pts: pts, xl: '数学(点)', yl: '英語(点)' }), es = figOk(ss); ok(!es, '図 散布図: ' + es);
+    ok((ss.match(/<circle/g) || []).length === pts.length, '図 散布図: 点の数が データの数と同じ');
+    const fr = []; for (let k = R.int(1, 12); k > 0; k--) fr.push(R.int(0, 40));
+    const hs = fig({ type: 'hist', start: R.int(0, 9) * 10, width: R.pick([1, 5, 10, 0.5]), freqs: fr, xl: '(点)', yl: '(人)' }), eh = figOk(hs); ok(!eh, '図 ヒストグラム: ' + eh);
+    const hts = []; hs.replace(/<rect [^>]*height="([\d.]+)"/g, (m, h) => { hts.push(+h); return m; });
+    const mx = Math.max.apply(null, fr), hm = Math.max.apply(null, hts);
+    ok(hts.length === fr.length && fr.every((f, k) => mx === 0 || Math.abs(hts[k] / (hm || 1) - f / mx) < 0.02), '図 ヒストグラム: 柱の高さが 度数に 比例する');
+    const et = figOk(fig({ type: 'table', head: ['階級(点)', '度数(人)'], rows: fr.slice(0, 6).map((f, k) => [k * 10 + '以上 ' + (k * 10 + 10) + '未満', f]) })); ok(!et, '図 表: ' + et);
+    // 見取り図
+    [M.solids.cuboid(R.int(1, 9), R.int(1, 9), R.int(1, 9)), M.solids.prism(R.int(3, 6), R.int(1, 5), R.int(1, 9)), M.solids.pyramid(R.int(3, 6), R.int(1, 5), R.int(1, 9))].forEach(function (sd) {
+      const sv = fig(Object.assign({}, sd, { mark: [sd.edges[R.int(0, sd.edges.length - 1)]], shade: [sd.faces[0]], segs: [[Object.keys(sd.verts)[0], Object.keys(sd.verts)[2]]] })), ev = figOk(sv);
+      ok(!ev, '図 見取り図: ' + ev);
+      ok((sv.match(/<text/g) || []).length === Object.keys(sd.verts).length && (sv.match(/<line/g) || []).length === sd.edges.length + 1, '図 見取り図: 頂点の名前と 辺が そろっている');
+    });
+  }
+  const cube = M.figure.svg(M.solids.cuboid(4, 4, 4));
+  ok((cube.match(/stroke-dasharray/g) || []).length === 3 && (cube.match(/<line/g) || []).length === 12 && 'ABCDEFGH'.split('').every(n => cube.indexOf('>' + n + '</text>') > 0), '立方体: 辺 12本のうち かくれた 3本が 破線、頂点 A〜H');
+  const pr = M.solids.prism(3, 3, 5); ok(Object.keys(pr.verts).join('') === 'ADBECF' && pr.edges.length === 9 && pr.faces.length === 5, '三角柱 ABC-DEF: 辺 9、面 5');
+  const py = M.solids.pyramid(4, 3, 5); ok(Object.keys(py.verts).length === 5 && py.edges.length === 8 && py.faces.length === 5, '四角錐: 頂点 5、辺 8、面 5');
+  ['x', null, { type: 'nai' }, { type: 'geo', items: [{ t: 'nai' }] }, { type: 'scatter', pts: [[NaN, 1]] }, { type: 'solid', verts: { A: [0, 0, 0] }, edges: ['AZ'] }].forEach(function (b) {
+    let threw = false; try { M.figure.svg(b); } catch (e) { threw = true; } ok(threw, 'こわれた図のデータは エラーにする(問題は 出さずに 作り直す)');
+  });
+  const ax = M.figure.niceAxis(3, 97, 5); ok(ax.lo === 0 && ax.hi === 100 && ax.step === 20 && ax.ticks.length === 6, 'きりのよい目盛り');
+})();
+
 section('エンジン: 開発用表示ではセーブしない');
 (function () {
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
@@ -251,51 +384,115 @@ ids.forEach(function (cid) {
     if (!ok(!!t, '型 ' + id + ' が 定義されている')) return;
     ok(typeof t.name === 'string' && typeof t.level === 'number', label + ': name と level がある');
     if (typeof ref === 'string') ok(usedTypes[id], label + ': どの敵にも 使われていない');
-    let withMistake = 0; const variety = {}, before = fails;
+    let withMistake = 0; const variety = {}, before = fails, kinds = {}, shown = {};
     for (let i = 0; i < 400 && fails - before < 6; i++) {
       const q = tryDo(label + ' #' + i + ' の生成', () => M.buildQuestion(C, ref, U.makeRng(1000 + i * 7919)));
       if (!q) continue;
       const tag = label + ' #' + i;
       renderOk(tag + ' text', q.text);
       if (q.expr !== undefined) renderOk(tag + ' expr', q.expr);
-      if (!renderOk(tag + ' form', q.form, true)) continue;
-      ok(M.checkQuestion(q) === null, tag + ': 画面に出せる形(' + M.checkQuestion(q) + ')');
-      // 入力画面と同じ組み立てで、空欄の数が 答えの数と 同じ(ちがうと 入力画面が止まる)
-      const ui = U.mathHTML(q.text) + (q.expr ? U.mathHTML(q.expr) : '') + U.mathHTML(q.form, true) + U.mathHTML(q.hint || '');
-      ok((ui.match(/class="blank"/g) || []).length === q.answers.length, tag + ': 入力画面の空欄の数が 答えの数と ちがう');
+      const cq = M.checkQuestion(q);
+      if (!ok(cq === null, tag + ': 画面に出せる形(' + cq + ')')) continue;
       renderOk(tag + ' hint', q.hint);
       ok(Array.isArray(q.explain) && q.explain.length >= 2 && q.explain.length <= 3, tag + ': 解説は 2〜3行');
       (q.explain || []).forEach((l, k) => renderOk(tag + ' 解説' + (k + 1), l));
-      ok(Array.isArray(q.answers) && q.answers.length === U.countBlanks(q.form) && q.answers.length >= 1, tag + ': 空欄の数と 答えの数が同じ');
-      ok(q.keys.length <= 4 && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで・決まった名前');
-      const vals = q.answers.map(U.parseValue);
-      if (!ok(vals.every(v => v), tag + ': 答えの書き方が正しい ' + JSON.stringify(q.answers))) continue;
-      ok(vals.every(v => v.simple), tag + ': 答えは 最も簡単な形 ' + JSON.stringify(q.answers));
-      ok(q.answers.every(a => typeable(a, q.keys)), tag + ': 答えを キーで入力できる ' + JSON.stringify(q.answers) + ' keys=' + q.keys.join(''));
-      ok(U.judge(q, q.answers).result === 'correct', tag + ': 正解を入れると 正解になる');
-      renderOk(tag + ' 正解の表示', U.fillForm(q.form, q.answers));
-      // 正解の数値を、別の計算(Math の関数)と つきあわせる
-      if (q.num) {
-        ok(q.num.length === vals.length && q.num.every((x, k) => x === null || (isFinite(x) && Math.abs(vals[k].num - x) <= 1e-7 * Math.max(1, Math.abs(x)))),
-          tag + ': 正解の値が 検算と合う ' + JSON.stringify(q.answers) + ' ≠ ' + JSON.stringify(q.num) + '  ' + (q.expr || q.form));
-      } else if (q.verify) {
-        ok(tryDo(tag + ' verify', () => q.verify(vals.map(v => v.num), q.answers)) === true, tag + ': 正解が 検算(verify)を通る ' + JSON.stringify(q.answers) + '  ' + (q.expr || q.form));
-      } else ok(t.noNum === true, tag + ': num か verify が必要(公式の穴うめなどは noNum:true)');
-      // よくある誤答
-      if (q.mistakes.length) withMistake++;
-      q.mistakes.forEach(function (m, k) {
-        const mt = tag + ' 誤答' + (k + 1);
-        if (!ok(m && Array.isArray(m.answers) && m.answers.length === q.answers.length && typeof m.tag === 'string' && m.tag && typeof m.msg === 'string', mt + ': answers・tag・msg がある')) return;
-        renderOk(mt + ' ひとこと', m.msg);
-        const full = m.answers.map((a, x) => a === '*' ? q.answers[x] : a);
-        if (!ok(full.every(a => U.parseValue(a)), mt + ': 書き方が正しい ' + JSON.stringify(m.answers))) return;
-        ok(m.answers.every(a => typeable(a, q.keys)), mt + ': キーで入力できる ' + JSON.stringify(m.answers));
-        const r = U.judge(q, full).result;
-        ok(r === 'wrong', mt + ': 正解と同じ値に なっている ' + JSON.stringify(m.answers) + ' (正解 ' + JSON.stringify(q.answers) + ')');
-        if (r === 'wrong') { const jm = U.judge(q, full).mistake; ok(!!jm, mt + ': 入力すると 診断が出る'); }
-      });
-      variety[(q.expr || '') + '|' + q.form + '|' + q.text] = 1;
+      if (q.fig) { const fe = figOk(tryDo(tag + ' 図', () => M.figure.svg(q.fig))); ok(!fe, tag + ' 図: ' + fe); }
+      ok(q.keys.length <= (q.input === 'ineq' ? 3 : 4) && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>', '.'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで(不等式は 3つまで)・決まった名前');
+      renderOk(tag + ' 正解の表示', M.answerText(q));
+      ok(M.judgeAny(q, M.correctInput(q)).result === 'correct', tag + ': 正解を入れると 正解になる');
+      ok(M.judgeAny(q, M.wrongInput(q)).result === 'wrong', tag + ': まちがいを入れると 不正解になる');
+      kinds[q.input] = 1;
+      if (q.input === 'form') {
+        if (!renderOk(tag + ' form', q.form, true)) continue;
+        // 入力画面と同じ組み立てで、空欄の数が 答えの数と 同じ(ちがうと 入力画面が止まる)
+        const ui = U.mathHTML(q.text) + (q.expr ? U.mathHTML(q.expr) : '') + U.mathHTML(q.form, true) + U.mathHTML(q.hint || '');
+        ok((ui.match(/class="blank"/g) || []).length === q.answers.length, tag + ': 入力画面の空欄の数が 答えの数と ちがう');
+        const vals = q.answers.map(U.parseValue);
+        if (!ok(vals.every(v => v), tag + ': 答えの書き方が正しい ' + JSON.stringify(q.answers))) continue;
+        ok(vals.every(v => v.simple), tag + ': 答えは 最も簡単な形 ' + JSON.stringify(q.answers));
+        ok(q.answers.every(a => typeable(a, q.keys)), tag + ': 答えを キーで入力できる ' + JSON.stringify(q.answers) + ' keys=' + q.keys.join(''));
+        // 正解の数値を、別の計算(Math の関数)と つきあわせる
+        if (q.num) {
+          ok(q.num.length === vals.length && q.num.every((x, k) => x === null || (isFinite(x) && Math.abs(vals[k].num - x) <= 1e-7 * Math.max(1, Math.abs(x)))),
+            tag + ': 正解の値が 検算と合う ' + JSON.stringify(q.answers) + ' ≠ ' + JSON.stringify(q.num) + '  ' + (q.expr || q.form));
+        } else if (q.verify) {
+          ok(tryDo(tag + ' verify', () => q.verify(vals.map(v => v.num), q.answers)) === true, tag + ': 正解が 検算(verify)を通る ' + JSON.stringify(q.answers) + '  ' + (q.expr || q.form));
+        } else ok(t.noNum === true, tag + ': num か verify が必要(公式の穴うめなどは noNum:true)');
+        // よくある誤答
+        if (q.mistakes.length) withMistake++;
+        q.mistakes.forEach(function (m, k) {
+          const mt = tag + ' 誤答' + (k + 1);
+          if (!ok(m && Array.isArray(m.answers) && m.answers.length === q.answers.length && typeof m.tag === 'string' && m.tag && typeof m.msg === 'string', mt + ': answers・tag・msg がある')) return;
+          renderOk(mt + ' ひとこと', m.msg);
+          const full = m.answers.map((a, x) => a === '*' ? q.answers[x] : a);
+          if (!ok(full.every(a => U.parseValue(a)), mt + ': 書き方が正しい ' + JSON.stringify(m.answers))) return;
+          ok(m.answers.every(a => typeable(a, q.keys)), mt + ': キーで入力できる ' + JSON.stringify(m.answers));
+          const r = U.judge(q, full).result;
+          ok(r === 'wrong', mt + ': 正解と同じ値に なっている ' + JSON.stringify(m.answers) + ' (正解 ' + JSON.stringify(q.answers) + ')');
+          if (r === 'wrong') { const jm = U.judge(q, full).mistake; ok(!!jm, mt + ': 入力すると 診断が出る'); }
+        });
+      } else if (q.input === 'choice') {
+        const it = q.choice, okIdx = M.correctInput(q);
+        shown[it.findIndex(c => c.ok) + ':' + it.map(c => c.text).join('|')] = 1;
+        it.forEach(function (c, k) {
+          renderOk(tag + ' 選択肢' + (k + 1), c.text);
+          if (c.ok) return;
+          const j = M.judgeAny(q, [k]);
+          ok(j.result === 'wrong', tag + ': まちがいの選択肢「' + c.text + '」だけを選ぶと 不正解');
+          if (c.tag) { ok(j.mistake && j.mistake.tag === c.tag && typeof c.msg === 'string' && c.msg.length > 0, tag + ': 選択肢「' + c.text + '」に ひとこと(msg)がある'); renderOk(tag + ' 選択肢のひとこと', c.msg); }
+        });
+        if (it.some(c => !c.ok && c.tag)) withMistake++;
+        ok(M.judgeAny(q, it.map((_, k) => k)).result === 'wrong', tag + ': 全部選ぶと 不正解');
+        if (q.multi) { if (okIdx.length > 1) ok(M.judgeAny(q, okIdx.slice(1)).result === 'wrong', tag + ': 一部だけ選ぶと 不正解'); }
+        else ok(okIdx.length === 1, tag + ': 正解は 1つ(複数なら multi になる)');
+        if (q.verify) ok(tryDo(tag + ' verify', () => q.verify()) === true, tag + ': 正解の選択肢が 検算(verify)を通る');
+      } else if (q.input === 'order') {
+        const n = q.order.length;
+        shown[q.orderShow.join('')] = 1;
+        q.order.forEach((x, k) => renderOk(tag + ' 手順' + (k + 1), x));
+        if (n <= 5) perms(n).forEach(pm => ok((M.judgeAny(q, pm).result === 'correct') === pm.every((x, k) => x === k), tag + ': 正しい順だけが 正解'));
+        if (q.mistakes.length) withMistake++;
+        q.mistakes.forEach(function (m, k) {
+          const mt = tag + ' 誤答' + (k + 1);
+          if (!ok(Array.isArray(m.order) && typeof m.tag === 'string' && m.tag && typeof m.msg === 'string' && m.msg, mt + ': order・tag・msg がある')) return;
+          renderOk(mt + ' ひとこと', m.msg);
+          const j = M.judgeAny(q, m.order);
+          ok(j.result === 'wrong' && !!j.mistake, mt + ': 正解と同じ順に なっている、または 診断が出ない');
+        });
+      } else {
+        const sl = q.sol, vs = [sl.a, sl.b].filter(x => x !== undefined), nums = vs.map(x => U.parseValue(x).num);
+        ok(vs.every(x => U.parseValue(x).simple && typeable(x, q.keys)), tag + ': 不等式の値は 最も簡単な形で、キーで入力できる ' + JSON.stringify(vs));
+        const xs = [0, -1000, 1000, 0.123];
+        nums.forEach(v => xs.push(v, v - 1e-6, v + 1e-6, v - 0.5, v + 0.5, v - 7, v + 7));
+        if (nums.length === 2) xs.push((nums[0] + nums[1]) / 2);
+        // 正解の範囲を、もとの不等式に 数を代入して 確かめる
+        if (typeof q.inside === 'function') xs.forEach(x => ok(M.sol.contains(sl, x) === !!q.inside(x), tag + ': x = ' + x + ' が 答えの範囲に 入るかどうかが、もとの不等式と 合わない  ' + (q.expr || '') + ' → ' + M.answerText(q)));
+        else ok(t.noNum === true, tag + ': 不等式の問題には inside(x)(もとの条件を 代入して確かめる関数)が必要');
+        // ほかの形・等号の有無を 入れたとき、同じ範囲のときだけ 正解になる
+        const a0 = vs[0] || '0', b0 = vs[1] || (Number.isInteger(nums[0] === undefined ? 0 : nums[0]) ? String((nums[0] === undefined ? 0 : nums[0]) + 1) : null);
+        M.sol.shapes.forEach(k => [false, true].forEach(function (eq) {
+          if (b0 === null && ['between', 'outside'].indexOf(k) >= 0) return;
+          const inp = { kind: k, eq: eq, raws: ['between', 'outside'].indexOf(k) >= 0 ? [a0, b0] : ['all', 'none'].indexOf(k) >= 0 ? [] : [a0] };
+          const mine = { kind: k, eq: eq, a: inp.raws[0], b: inp.raws[1] }, pts = xs.concat([U.parseValue(a0).num, b0 === null ? 0 : U.parseValue(b0).num, U.parseValue(a0).num + 1e-6, U.parseValue(a0).num - 1e-6]);
+          const same = pts.every(x => M.sol.contains(mine, x) === M.sol.contains(sl, x));
+          ok((M.judgeAny(q, inp).result === 'correct') === same, tag + ': 「' + M.sol.markup(mine, q.solVar) + '」の判定が おかしい(正解 ' + M.answerText(q) + ')');
+        }));
+        if (q.mistakes.length) withMistake++;
+        q.mistakes.forEach(function (m, k) {
+          const mt = tag + ' 誤答' + (k + 1);
+          if (!ok(m.sol && typeof m.tag === 'string' && m.tag && typeof m.msg === 'string' && m.msg, mt + ': sol・tag・msg がある')) return;
+          renderOk(mt + ' ひとこと', m.msg);
+          const pickV = (x, d) => (x !== undefined && x !== '*') ? x : d;
+          const inp = { kind: m.sol.kind, eq: m.sol.eq === undefined ? !!sl.eq : !!m.sol.eq, raws: [pickV(m.sol.a, a0), pickV(m.sol.b, b0 || '1')].slice(0, { between: 2, outside: 2, all: 0, none: 0 }[m.sol.kind] === undefined ? 1 : { between: 2, outside: 2, all: 0, none: 0 }[m.sol.kind]) };
+          ok(inp.raws.every(x => typeable(x, q.keys)), mt + ': キーで入力できる ' + JSON.stringify(inp.raws));
+          const j = M.judgeAny(q, inp);
+          ok(j.result === 'wrong' && !!j.mistake, mt + ': 正解と同じ範囲に なっている、または 診断が出ない(' + M.sol.markup({ kind: inp.kind, eq: inp.eq, a: inp.raws[0], b: inp.raws[1] }) + ')');
+        });
+      }
+      variety[(q.expr || '') + '|' + q.text + '|' + M.answerText(q) + '|' + (q.fig ? JSON.stringify(q.fig).length : '')] = 1;
     }
+    if (kinds.choice) ok(Object.keys(shown).length >= 2, label + ': 選択肢の並びが 毎回 変わる');
+    if (kinds.order) ok(Object.keys(shown).length >= 2, label + ': 並べ替えの 出し方が 毎回 変わる');
     ok(withMistake > 0, label + ': よくある誤答のデータが 1つもない');
     ok(Object.keys(variety).length >= 4, label + ': 問題の種類が 少なすぎる(' + Object.keys(variety).length + ' 通り)');
   });
