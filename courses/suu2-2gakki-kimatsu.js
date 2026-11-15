@@ -952,6 +952,8 @@ const dungeons = {
 
 M.registerCourse({
   id: 'suu2-2gakki-kimatsu',
+  /* 育成ゲーム(pet.js)用: 草原の型が どの単元(ダンジョン)の 基本問題か。RPG では 使わない */
+  pet: { basic: { 'trig-value': ['cave', 'tower'], 'deg-rad': ['cave', 'tower'], 'sqrt-basic': 'forest', 'pow-basic': ['forest', 'logtower'], 'log-basic': 'logtower' } },
   title: '数学II 2学期期末クエスト',
   subtitle: '加法定理 〜 指数関数・対数関数',
   start: { map: 'town', x: 7, y: 9 },

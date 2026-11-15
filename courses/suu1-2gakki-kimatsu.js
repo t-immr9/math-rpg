@@ -1417,6 +1417,8 @@ const dungeons = {
 
 M.registerCourse({
   id: 'suu1-2gakki-kimatsu',
+  /* 育成ゲーム(pet.js)用: 草原の型が どの単元(ダンジョン)の 基本問題か。RPG では 使わない */
+  pet: { basic: { 'eq-factor': 'cave', 'disc': 'cave', 'axis-pts': 'cave', 'ineq-fact': 'tower', 'ineq-sq': 'tower', 'freq-basic': 'forest', 'rep-val': 'forest', 'range-iqr': 'chirabari', 'deviation': 'chirabari', 'r-range': 'chirabari' } },
   title: '数学I 2学期期末クエスト',
   subtitle: '2次方程式・2次不等式・データの分析',
   start: { map: 'town', x: 7, y: 9 },

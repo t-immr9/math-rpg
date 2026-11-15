@@ -1093,6 +1093,8 @@ const dungeons = {
 
 M.registerCourse({
   id: 'suuA-2gakki-kimatsu',
+  /* 育成ゲーム(pet.js)用: 草原の型が どの単元(ダンジョン)の 基本問題か。RPG では 使わない */
+  pet: { basic: { 'tc-basic': 'cave', 'pw-basic': 'tower', 'cc-dist': 'tower', 'sp-cube-edges': 'rittai', 'ph-count': 'rittai', 'rp-count': 'rittai', 'euler': 'rittai' } },
   title: '数学A 2学期期末クエスト',
   subtitle: '接弦定理・方べきの定理・2つの円・作図・空間図形・多面体',
   start: { map: 'town', x: 7, y: 9 },

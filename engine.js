@@ -1324,7 +1324,7 @@ const JEST = ['{n}は 三角じょうぎで 背中を かいている。', '{n}�
 const RANDOM_NAMES = ['ソラ', 'ミナト', 'ハル', 'ユズ', 'カナタ', 'リコ', 'アオイ', 'つむぎ', 'れん', 'ひなた'];
 const ITEMS = { herb: { name: 'やくそう', price: 10, desc: 'HPを 最大の半分 回復' }, bell: { name: 'もどりの鈴', price: 25, desc: 'ダンジョンから 町へ もどる' } };
 
-M.start = function (courseId, mount) {
+M.start = function (courseId, mount, host) {
   const course = M.courses[courseId];
   if (!course) { mount.textContent = 'コースが見つかりません: ' + courseId; return; }
   const SAVE_KEY = 'mathrpg:' + course.id;
@@ -2536,6 +2536,15 @@ M.start = function (courseId, mount) {
       ov('<div style="font-size:11px;line-height:1.5;font-weight:normal;word-break:break-all">' + log.map(escH).join('<br>') + '</div>');
     }
     else if (a[0] === 'say') say('ソラは レベル6に 上がった!\nsin 75° = {√6 + √2/4}、2^{-3} = {1/8}、[3]√{27} = 3');
+  }
+  /* ほかのゲーム(育成ゲーム pet.js)に、入力画面・解説・音だけを 貸し出す。host を わたしたときは RPG を 始めない(セーブも さわらない)。 */
+  if (host) {
+    return {
+      ask: askAnswer, explain: showExplain, clear: function () { modal = null; showMsg(''); zoomClose(); },
+      sfx: sfx, setSound: setSound, soundOn: function () { return soundOn; },
+      tone: function (freq, delay, dur, type, vol) { if (!soundOn) return; ensureAudio(); if (AC) tone(freq, AC.currentTime + 0.01 + delay, dur, type || 'sine', vol || 0.05); },
+      dev: function () { return modal && modal.dev; }, key: function (k) { if (modal && modal.key) modal.key({ key: k }); }, tap: function () { if (modal && modal.A) modal.A(); }
+    };
   }
   requestAnimationFrame(frame);
   (DEV ? debugMain() : main()).catch(function (e) { console.error(e); });

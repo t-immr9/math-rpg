@@ -908,5 +908,238 @@ ids.forEach(function (cid) {
   }
 });
 
+/* ============================================================
+ * 5. 育成ゲーム(pet.js): 成長の段階・1日5問までの成長・放置しても死なない/退化しない・進化の分かれ道・
+ *    見た目の組み合わせ・問題の出し方・記録のことば・セーブが消えない
+ * ============================================================ */
+const P = require('../pet.js');
+(function petTests() {
+  const DAY0 = new Date(2026, 10, 16, 8), day = k => new Date(DAY0.getTime() + k * 86400000);
+  const strip = s => s.replace(/(pc|lg|au)\d+/g, '$1').replace(/\d+ic/g, 'ic');
+  const svgOk = function (svg) {
+    if (typeof svg !== 'string' || svg.indexOf('<svg') !== 0) return 'SVG が 作れない';
+    if (/NaN|undefined|Infinity|null|\[object/.test(svg)) return 'NaN / undefined が まじっている';
+    const stack = [], re = /<(\/?)([a-zA-Z]+)[^>]*?(\/?)>/g; let m;
+    while ((m = re.exec(svg))) { if (m[3] === '/') continue; if (m[1]) { if (stack.pop() !== m[2]) return 'タグの対応が おかしい'; } else stack.push(m[2]); }
+    return stack.length ? 'タグが 閉じていない' : null;
+  };
+  const mainCourses = Object.keys(M.courses).filter(id => P.units(M.courses[id]).length === 4);
+  const feed = (S, units, k, unit, n) => { let ev = null; for (let i = 0; i < (n || P.MEAL); i++) ev = P.record(S, units, { mode: 'meal', type: 't', unit: unit || units[0].id }, true, null, day(k)); return ev; };
+  const fresh = function (kind) { const S = P.newState('x'); P.adopt(S, kind || 'mystic', [0, 1, 2, 3, 4], 'もこ', day(0)); return S; };
+  const U4 = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }];
+
+  section('育成ゲーム: 見た目の組み合わせ・絵');
+  ok(P.KINDS.length === 3, 'キャラクターは 3種類');
+  P.KINDS.forEach(function (K) {
+    ok(P.lookCount(K.id) >= 300, K.name + ': 見た目の組み合わせが 数百通り(' + P.lookCount(K.id) + ')');
+    ok(K.stages.length === 5 && new Set(K.stages).size === 5, K.name + ': 段階の名前が 5つ');
+    K.parts.forEach(pt => ok(pt.opts.length >= 3 && pt.opts.length <= 6 && new Set(pt.opts).size === pt.opts.length, K.name + ' の部品「' + pt.label + '」は 3〜6 通り'));
+    const base = K.parts.map((pt, i) => (i + 1) % pt.opts.length), mk = (look, st, br) => { const p = P.newPet(K.id, look, 'てすと'); p.gp = [0, 5, 15, 35, 35][st - 1]; p.branch = st >= 4 ? br : null; p.legend = st >= 5; return p; };
+    // 部品を 1つずつ 変えると、絵が 変わる(育った姿で)。どの段階・気分でも 絵が くずれない
+    K.parts.forEach(function (pt, pi) {
+      const seen = new Set();
+      pt.opts.forEach(function (_, oi) {
+        const look = base.slice(); look[pi] = oi;
+        for (let st = 1; st <= 5; st++) ['fine', 'happy', 'eat', 'hungry', 'lonely', 'sleep'].forEach(function (md, mi) { const e = svgOk(P.art.pet(mk(look, st, (oi + mi) % 4), { mood: md })); ok(!e, K.name + ' ' + pt.label + oi + ' 段階' + st + ' ' + md + ': ' + e); });
+        seen.add(strip(P.art.pet(mk(look, 3, 0), {})));
+      });
+      ok(seen.size === pt.opts.length, K.name + ' の「' + pt.label + '」を 変えると 見た目が 変わる(' + seen.size + '/' + pt.opts.length + ')');
+    });
+    const stg = [1, 2, 3, 4, 5].map(st => strip(P.art.pet(mk(base, st, 1), {})));
+    ok(new Set(stg).size === 5, K.name + ': 5つの段階で 姿が ちがう');
+    const brs = [0, 1, 2, 3].map(b => strip(P.art.pet(mk(base, 4, b), {})));
+    ok(new Set(brs).size === 4, K.name + ': 分かれ道の 4通りで 姿が ちがう');
+    ok(new Set([0, 1, 2, 3].map(b => strip(P.art.pet(mk(base, 5, b), {})))).size === 4 && brs.indexOf(strip(P.art.pet(mk(base, 5, 0), {}))) < 0, K.name + ': 伝説の姿は 別の絵');
+    P.ITEMS.filter(it => it.cat === 'acc').forEach(function (it) {
+      [2, 4].forEach(function (st) { const p = mk(base, st, 2), plain = strip(P.art.pet(p, {})); p.acc[it.slot] = it.id; const s = P.art.pet(p, {}); ok(!svgOk(s) && strip(s) !== plain, K.name + ' 段階' + st + ' に 小物 ' + it.id + ' を つけられる'); ok(strip(P.art.pet(p, { acc: false })) === plain, '小物なしの 絵に もどせる'); });
+    });
+    ok(P.zukanKeys().filter(k => k.indexOf(K.id + ':') === 0).length === 5, K.name + ': ずかんは 分かれ道 4 + 伝説 1');
+  });
+  ok(P.zukanKeys().length === 15 && new Set(P.zukanKeys()).size === 15, 'ずかんは 15 種類');
+  ok(P.ITEMS.length <= 48 && new Set(P.ITEMS.map(i => i.id)).size === P.ITEMS.length, '品物の ID が 重ならない・48個まで(記録のことばの都合)');
+  ok(P.TITLES.length <= 16 && new Set(P.TITLES.map(t => t.id)).size === P.TITLES.length, '称号の ID が 重ならない・16個まで');
+  P.ITEMS.forEach(function (it) {
+    ok(!svgOk(P.art.itemIcon(it.id)), '品物 ' + it.id + ' の絵');
+    ok(it.limited ? P.STREAK_REWARDS.some(r => r.item === it.id && r.days === it.limited) : (it.price === 0 || (it.price >= 20 && it.price <= 300)), '品物 ' + it.id + ' の 値段(20〜300)か 限定品の設定');
+    if (it.cat === 'acc') ok(P.SLOTS.indexOf(it.slot) >= 0 && typeof P.art.ACC[it.id] === 'function', '小物 ' + it.id + ' の つける場所と絵');
+    if (it.cat === 'furn') ok(typeof P.art.FURN[it.id] === 'function' && it.w > 0 && it.h > 0 && (it.on === 'wall' || it.on === 'floor'), '家具 ' + it.id + ' の 大きさと絵');
+  });
+  ['acc', 'furn', 'wall', 'floor'].forEach(c => ok(P.ITEMS.filter(i => i.cat === c && !i.limited).length >= 4, '品物の種類 ' + c + ' が 4つ以上'));
+  P.STREAK_REWARDS.forEach(r => ok(P.itemOf(r.item) && P.itemOf(r.item).limited === r.days, r.days + '日の ごほうびの 限定品'));
+  (function () {
+    const S = fresh(); P.ITEMS.forEach(it => { S.owned[it.id] = 1; });
+    P.ITEMS.filter(it => it.cat === 'furn').forEach((it, i) => { const pl = P.place(S, it.id, i * 53 % 400 - 40, i * 71 % 300 - 20); ok(pl.x - it.w / 2 >= 0 && pl.x + it.w / 2 <= P.ROOM.w && pl.y <= P.ROOM.h && pl.y - it.h >= 0 && (it.on === 'wall' ? pl.y <= P.ROOM.floorY : pl.y >= P.ROOM.floorY), '家具 ' + it.id + ' は 部屋の中(' + it.on + ')に おさまる'); });
+    P.ITEMS.filter(it => it.cat === 'wall').forEach(function (w, i) { ok(P.setRoom(S, w.id), '壁紙 ' + w.id + ' に かえられる'); P.setRoom(S, ['y_wood', 'y_check', 'y_shiba', 'y_tile'][i % 4]); [3, 12, 17, 22].forEach(h => { const e = svgOk(P.art.room(S, { hour: h, sel: 'f_bed' })); ok(!e, '部屋の絵(' + w.id + ' ' + h + '時): ' + e); }); });
+    const n0 = S.room.placed.length; P.place(S, 'f_bed', 100, 200); ok(S.room.placed.length === n0, '同じ家具を 置き直しても 増えない(動くだけ)'); P.unplace(S, 'f_bed'); ok(S.room.placed.length === n0 - 1, '家具を しまえる');
+  })();
+
+  section('育成ゲーム: 成長の段階・1日5問までの成長');
+  P.KINDS.forEach(function (K) {
+    const S = fresh(K.id), pet = S.pets[0], seen = [P.stageOf(pet)];
+    for (let k = 0; k < 7; k++) { const ev = feed(S, U4, k); seen.push(P.stageOf(pet)); ok(ev.mealDone && S.today.done && pet.gp === (k + 1) * P.MEAL, K.name + ': ' + (k + 1) + '日目の ごはんで 成長 ' + (k + 1) * P.MEAL); }
+    ok(seen.join() === '1,2,2,3,3,3,3,4', K.name + ': 段階は 1日目で 2、3日ぶんで 3、7日ぶんで 4(' + seen.join() + ')');
+    ok(P.stageName(pet) === K.stages[3] && S.days.total === 7 && S.days.streak === 7 && S.days.stamps.length === 7, K.name + ': 7日で ' + K.stages[3] + '・スタンプ 7');
+  });
+  (function () {
+    const S = fresh(), pet = S.pets[0];
+    for (let i = 0; i < 4; i++) { const ev = P.record(S, U4, { mode: 'meal', type: 't', unit: 'a' }, true, null, day(0)); ok(ev.grew && !ev.mealDone && pet.gp === i + 1 && S.today.fed === i + 1, (i + 1) + '問目: 成長ゲージが 1 進む'); }
+    const e5 = P.record(S, U4, { mode: 'meal', type: 't', unit: 'a' }, true, null, day(0));
+    ok(e5.grew && e5.mealDone && S.today.done && S.days.stamps.length === 1 && S.days.streak === 1, '5問目で「今日のごはん」完了・スタンプ');
+    const coins = S.coins;
+    for (let i = 0; i < 30; i++) { const ev = P.record(S, U4, { mode: i % 2 ? 'meal' : 'snack', type: 't', unit: 'a' }, true, null, day(0)); ok(!ev.grew && pet.gp === P.MEAL, '6問目から: 成長しない'); ok(ev.coins >= P.COIN.base, '6問目から: コインは もらえる'); }
+    ok(S.coins > coins && S.days.stamps.length === 1 && S.days.total === 1, 'おやつ: コインだけ 増える(スタンプ・日数は 1日 1回)');
+    const S2 = fresh(); let c2 = 0;
+    for (let i = 0; i < 3; i++) { const g = S2.pets[0].gp, ev = P.record(S2, U4, { mode: 'meal', type: 't', unit: 'a' }, false, 'tag', day(0)); ok(!ev.grew && ev.coins === 0 && S2.pets[0].gp === g && S2.coins === c2, 'まちがい: 何も へらない・増えない'); c2 = S2.coins; }
+    ok(S2.stats.wrong === 3 && S2.stats.mistakes.tag === 3 && S2.review.length === 3 && S2.today.fed === 0, 'まちがいは 記録だけ される(型・まちがい方)');
+    feed(S2, U4, 0, 'a', 2); const g2 = S2.pets[0].gp; P.touch(S2, day(1)); ok(S2.today.fed === 0 && !S2.today.done && S2.pets[0].gp === g2, '日付が かわると 今日のごはんは 0 から(成長は そのまま)');
+    feed(S2, U4, 1); ok(S2.pets[0].gp === g2 + P.MEAL, 'つぎの日は また 5問ぶん 成長できる');
+    const S3 = fresh(); let cb = []; for (let i = 0; i < 6; i++) cb.push(P.record(S3, U4, { mode: 'snack', type: 't', unit: 'a' }, true, null, day(0)).coins);
+    ok(cb.join() === [2, 2, 3, 3, 4, 4].map(x => x + P.COIN.base - 2).join(), '連続正解で コインが 少し増える(' + cb.join() + ')');
+  })();
+
+  section('育成ゲーム: 放置しても 死なない・退化しない');
+  [1, 2, 3, 10, 100, 1000].forEach(function (gap) {
+    const S = fresh('animal'); for (let k = 0; k < 4; k++) feed(S, U4, k);
+    const pet = S.pets[0], gp = pet.gp, st = P.stageOf(pet), coins = S.coins, total = S.days.total, best = S.days.best;
+    const r = P.touch(S, day(3 + gap));
+    ok(S.pets.length === 1 && pet.gp === gp && P.stageOf(pet) === st && S.coins === coins && S.days.total === total && S.days.best === best, gap + '日 放置: なかま・成長・段階・コイン・合計日数は そのまま');
+    ok(r.away === gap && P.mood(S, day(3 + gap)) === (gap >= 2 ? 'lonely' : 'hungry'), gap + '日 放置: 気分は ' + (gap >= 2 ? 'さみしそう' : 'おなかがすいた'));
+    ok(S.days.streak === (gap >= 2 ? 0 : 4), gap + '日 放置: 連続日数は ' + (gap >= 2 ? 'とぎれる' : 'つづく'));
+    feed(S, U4, 3 + gap);
+    ok(P.mood(S, day(3 + gap)) === 'fine' && pet.gp === gp + P.MEAL && S.days.total === total + 1 && S.days.streak === (gap >= 2 ? 1 : 5) && S.days.best >= best, gap + '日 放置のあと ごはん: すぐ 元気・成長は つづきから');
+  });
+  (function () {
+    const S = fresh(); feed(S, U4, 5); const gp = S.pets[0].gp;
+    tryDo('時計を もどしても 止まらない', () => { P.touch(S, day(-30)); feed(S, U4, -30); P.touch(S, day(5)); });
+    ok(S.pets[0].gp >= gp && S.pets.length === 1, '時計を もどしても 成長は へらない');
+    ok(P.mood(P.newState('x'), day(0)) === 'fine', 'なかまが いないときも 気分の計算で 止まらない');
+    // でたらめな操作を くり返しても、成長・段階・なかま・合計日数は へらない。1日の成長は 5問まで
+    for (let t = 0; t < 120; t++) {
+      const r = U.makeRng(900 + t); let S2 = fresh(r.pick(['mystic', 'animal', 'human'])), k = 0, gained = 0, today = 0;
+      for (let i = 0; i < 160; i++) {
+        const before = S2.pets.map(p => [p.gp, P.stageOf(p)]), n = S2.pets.length, tot = S2.days.total, best = S2.days.best, op = r.int(0, 11);
+        if (op === 0) { const j = r.pick([1, 1, 1, 2, 3, 9, 40]); k += j; today = k; gained = 0; P.touch(S2, day(k)); }
+        else if (op <= 6) { const g0 = S2.pets[S2.cur].gp; P.record(S2, U4, { mode: r.pick(['meal', 'meal', 'snack', 'legend']), type: 'ty' + r.int(0, 5), unit: r.pick(U4).id }, r.chance(0.75), 'tg', day(k)); gained += S2.pets[S2.cur].gp - g0; }
+        else if (op === 7) P.buy(S2, r.pick(P.ITEMS).id);
+        else if (op === 8) { P.wear(S2, S2.cur, r.pick(P.ITEMS).id); P.place(S2, r.pick(P.ITEMS).id, r.int(-50, 400), r.int(-50, 400)); P.setRoom(S2, r.pick(P.ITEMS).id); }
+        else if (op === 9) { P.adopt(S2, r.pick(P.adoptInfo(S2).kinds), [r.int(0, 5), r.int(0, 5), r.int(0, 5), r.int(0, 5), r.int(0, 5)], 'にごう', day(k)); if (S2.pets.length > n) { before.push([0, 1]); } S2.cur = r.int(0, S2.pets.length - 1); gained = Math.min(gained, P.MEAL); }
+        else if (op === 10) P.restyle(S2.pets[S2.cur], [r.int(0, 9), r.int(0, 9), r.int(0, 9), r.int(0, 9), r.int(0, 9)], 'かえた');
+        else S2 = P.restore(JSON.stringify(S2), 'x');
+        if (!ok(S2 && S2.pets.length >= n && S2.pets.length <= P.MAX_PETS && S2.days.total >= tot && S2.days.best >= best && S2.coins >= 0 && before.every((b, j) => S2.pets[j].gp >= b[0] && P.stageOf(S2.pets[j]) >= b[1]), 'でたらめな操作 #' + t + ': 何も へらない(操作 ' + op + ')')) break;
+        if (!ok(gained <= P.MEAL && S2.today.fed <= P.MEAL, 'でたらめな操作 #' + t + ': 1日の成長は 5問まで(' + gained + ')')) break;
+      }
+    }
+  })();
+
+  section('育成ゲーム: 進化の分かれ道・伝説・なかま・ごほうび');
+  P.KINDS.forEach(function (K) {
+    [0, 1, 2, 3].forEach(function (b) {
+      const S = fresh(K.id), pet = S.pets[0]; let ev = null;
+      for (let k = 0; k < 7; k++) { for (let i = 0; i < P.MEAL; i++) ev = P.record(S, U4, { mode: 'meal', type: 't', unit: U4[i < 3 ? b : (b + 1 + i + k) % 4].id }, true, null, day(k)); if (k < 6) ok(pet.branch === null, K.name + ': おとなに なるまでは 分かれ道は 決まらない'); }
+      ok(P.stageOf(pet) === 4 && pet.branch === b && ev.branch === b && ev.stageFrom === 3 && ev.stageTo === 4, K.name + ': 単元 ' + (b + 1) + ' を いちばん解くと 分かれ道 ' + b);
+      ok(!!S.zukan[K.id + ':' + b] && ev.zukan.indexOf(K.id + ':' + b) >= 0 && Object.keys(S.zukan).length === 1, K.name + ': ずかんに 登録(' + P.formName(K.id, b, false) + ')');
+      for (let i = 0; i < 40; i++) P.record(S, U4, { mode: 'snack', type: 't', unit: U4[(b + 1) % 4].id }, true, null, day(6));
+      ok(pet.branch === b, K.name + ': 一度 決まった姿は あとから 変わらない');
+      for (let i = 0; i < P.LEGEND_NEED - 1; i++) ev = P.record(S, U4, { mode: 'legend', type: 'hx', unit: null }, true, null, day(6));
+      ok(!pet.legend && pet.lg === P.LEGEND_NEED - 1 && P.gauge(pet).now === P.LEGEND_NEED - 1, K.name + ': 発展問題 ' + (P.LEGEND_NEED - 1) + '問では まだ');
+      P.record(S, U4, { mode: 'legend', type: 'hx', unit: null }, false, null, day(6)); ok(pet.lg === P.LEGEND_NEED - 1, 'まちがえても 伝説への 進み具合は へらない');
+      ev = P.record(S, U4, { mode: 'legend', type: 'hx', unit: null }, true, null, day(6));
+      ok(pet.legend && ev.legend && P.stageOf(pet) === 5 && ev.stageTo === 5 && !!S.zukan[K.id + ':L'] && P.stageName(pet) === K.stages[4], K.name + ': 発展問題 ' + P.LEGEND_NEED + '問で 伝説の姿');
+    });
+  });
+  (function () {
+    const S = fresh(); for (let i = 0; i < 12; i++) P.record(S, U4, { mode: 'legend', type: 'hx', unit: null }, true, null, day(0));
+    ok(!S.pets[0].legend && S.pets[0].lg === 0, 'おとなに なる前は 伝説への挑戦が 数えられない');
+    ok(P.decideBranch({ unitOk: { b: 3, c: 3 } }, U4) === 1 && P.decideBranch({ unitOk: {} }, U4) === 0, '同じ数のときは 並び順で 先の単元');
+    ok(!P.adoptInfo(S).can && P.adopt(S, 'animal', [0], 'にごう', day(0)) === null, 'おとなに なる前は 2人目を むかえられない');
+    for (let k = 0; k < 7; k++) feed(S, U4, k);
+    const info = P.adoptInfo(S); ok(info.can && info.kinds.join() === 'animal,human', 'おとなに なると 別の種類を むかえられる');
+    ok(P.adopt(S, 'mystic', [0], 'だめ', day(7)) === null && !!P.adopt(S, 'animal', [1, 2, 3, 4], 'にごう', day(7)) && S.pets.length === 2 && S.cur === 1 && P.stageOf(S.pets[0]) === 4, '2人目を むかえても 1人目は 部屋に のこる');
+    const gp0 = S.pets[0].gp; feed(S, U4, 7); ok(S.pets[1].gp === P.MEAL && S.pets[0].gp === gp0, 'ごはんは おせわ中の子が 育つ');
+    const p = S.pets[0], look = p.look.slice(); P.restyle(p, [2, 3, 4, 1], 'あたらし'); ok(p.gp === gp0 && P.stageOf(p) === 4 && p.look.join() !== look.join() && p.name === 'あたらし', 'かがみ: 見た目だけ 変わる(成長は そのまま)');
+    // 連続日数の ごほうび・称号
+    const T = fresh(), got = [];
+    for (let k = 0; k < 31; k++) { const ev = feed(T, U4, k); ev.rewards.forEach(r => got.push(r.days + ':' + (k + 1))); }
+    ok(got.join() === '3:3,7:7,14:14,30:30', '連続 3・7・14・30日で ごほうび(' + got.join() + ')');
+    P.STREAK_REWARDS.forEach(r => ok(T.owned[r.item] === 1, r.days + '日の 限定品を 持っている'));
+    ok(['s3', 's7', 's14', 's30', 'p1', 'd10', 'd30', 'c10'].every(t => T.titles.indexOf(t) >= 0) && T.title === T.titles[0], '称号が もらえる(' + T.titles.join() + ')');
+    ok(!P.buy(T, 'l_niji').ok && !P.buy(T, 'nai').ok, '限定品・ない品物は 買えない');
+    T.coins = 39; ok(!P.buy(T, 'a_mugi').ok && T.coins === 39, 'コインが 足りないと 買えない'); T.coins = 40; ok(P.buy(T, 'a_mugi').ok && T.coins === 0 && !P.buy(T, 'a_mugi').ok, '買うと コインが へる・2回は 買えない');
+    ok(P.wear(T, 0, 'a_mugi') && T.pets[0].acc.head === 'a_mugi' && P.wear(T, 0, 'a_mugi') && !T.pets[0].acc.head && !P.wear(T, 0, 'a_beret'), '小物を つける・はずす(持っていない物は つけられない)');
+  })();
+
+  section('育成ゲーム: 問題の出し方(コースから 自動で 取り出す)');
+  ok(mainCourses.length >= 3, '単元が 4つ とれるコースが 3つ以上(' + mainCourses.join() + ')');
+  Object.keys(M.courses).forEach(id => tryDo(id + ': 単元の取り出しで 止まらない', () => { P.units(M.courses[id]); P.legendPool(M.courses[id]); }));
+  mainCourses.forEach(function (cid) {
+    const C = M.courses[cid], units = P.units(C), tid = P.typeId, lp = P.legendPool(C), r = U.makeRng(31);
+    const extraTypes = {}; Object.keys(C.dungeons).filter(d => C.dungeons[d].extra).forEach(d => [].concat.apply([C.dungeons[d].boss], C.dungeons[d].floors.map(f => f.enemies)).forEach(e => C.enemies[e].types.forEach(t => { extraTypes[tid(t)] = 1; })));
+    units.forEach(function (u) {
+      ['basic', 'standard', 'advanced'].forEach(function (tier) {
+        ok(u[tier].length >= 1, cid + ' 単元 ' + u.id + ': ' + tier + ' の型が ある');
+        u[tier].forEach(function (ref) { ok(!!C.types[tid(ref)] && !extraTypes[tid(ref)], cid + ' ' + u.id + ' ' + tier + ': 型 ' + tid(ref) + ' が ある(発展の型は まぜない)'); ok(!!M.safeQuestion(C, [ref], ref, () => Math.floor(r.next() * 4294967296)), cid + ' ' + tid(ref) + ': 問題を 作れる'); });
+      });
+      ok(typeof u.name === 'string' && u.name.length > 0 && !!C.dungeons[u.id] && !C.dungeons[u.id].extra && !C.dungeons[u.id].need, cid + ' 単元 ' + u.id + ' は 4つのダンジョンの 1つ');
+    });
+    if (C.pet && C.pet.basic) Object.keys(C.pet.basic).forEach(t => ok(!!C.types[t] && [].concat(C.pet.basic[t]).every(u => units.some(x => x.id === u)), cid + ' の pet.basic: ' + t));
+    ok(lp.length >= 1 && lp.every(ref => extraTypes[tid(ref)]), cid + ': 発展(伝説への挑戦)は 隠しダンジョンの型');
+    for (let i = 0; i < 300; i++) {
+      const sel = units.filter(() => r.chance(0.6)), us = sel.length ? sel : [r.pick(units)], S = P.newState(cid); units.forEach(u => { if (us.indexOf(u) < 0) S.units[u.id] = false; });
+      ok(P.selectedUnits(S, units).map(u => u.id).join() === us.map(u => u.id).join(), '外した単元は 出ない(えらんだ単元だけ)');
+      const meal = P.pickMeal(us, r, P.MEAL, i % 3 ? [] : [tid(us[0].basic[0])]), nb = meal.filter(m => m.tier === 'basic').length;
+      ok(meal.length === P.MEAL && meal.every(m => us.some(u => u.id === m.unit && u[m.tier].indexOf(m.ref) >= 0)), cid + ': ごはんは 5問・えらんだ単元から #' + i);
+      ok(nb >= 3 && nb <= 4, cid + ': ごはんは 基本 3〜4問 + 標準 1〜2問(基本 ' + nb + ')#' + i);
+      ok(meal.every((m, k) => k === 0 || tid(m.ref) !== tid(meal[k - 1].ref)), cid + ': 同じ型が 続かない #' + i + ' ' + meal.map(m => tid(m.ref)).join());
+      const rest = r.int(1, 4); ok(P.pickMeal(us, r, rest, []).length === rest, cid + ': とちゅうから(のこり ' + rest + '問)');
+      ['basic', 'standard', 'advanced'].forEach(function (tier) { const a = P.pickSnack(us, tier, r, null, []), b = a && P.pickSnack(us, tier, r, tid(a.ref), []); ok(a && a.tier === tier && us.some(u => u.id === a.unit) && b && (tid(b.ref) !== tid(a.ref) || new Set([].concat.apply([], us.map(u => u[tier].map(tid)))).size === 1), cid + ': おやつ(' + tier + ')'); });
+      const lg = P.pickLegend(C, r, null, []); ok(lg && extraTypes[tid(lg.ref)] && lg.unit === null, cid + ': 伝説への挑戦の問題');
+    }
+  });
+
+  section('育成ゲーム: 記録のことば・セーブが消えない');
+  const names = ['もこ', 'ソラ', 'あいうえおか', 'ヴァーミリ', 'ー', 'ぷるる'];
+  ok(P.nameOk('もこ') && P.nameOk('ヴァーミリ') && !P.nameOk('') && !P.nameOk('あいうえおかき') && !P.nameOk('abc') && !P.nameOk('漢字'), 'なまえは ひらがな・カタカナ 1〜6文字');
+  const randomState = function (cid, r) {
+    const C = M.courses[cid], units = P.units(C), S = P.newState(cid), np = r.int(1, P.MAX_PETS);
+    for (let i = 0; i < np; i++) { const K = r.pick(P.KINDS), p = P.newPet(K.id, K.parts.map(pt => r.int(0, pt.opts.length - 1)), r.pick(names), day(0)); p.gp = r.pick([0, 3, 5, 14, 15, 34, 35, 35, 50]); if (p.gp >= 35) { p.branch = r.int(0, 3); p.legend = r.chance(0.3); p.lg = p.legend ? P.LEGEND_NEED : r.int(0, 9); } S.pets.push(p); }
+    S.cur = r.int(0, np - 1); S.coins = r.int(0, 9999); S.days = { last: r.chance(0.8) ? P.dayKey(day(r.int(-300, 0))) : null, streak: r.int(0, 60), best: r.int(60, 200), total: r.int(0, 900), stamps: [] };
+    P.ITEMS.forEach(it => { if (r.chance(0.4)) S.owned[it.id] = 1; }); P.STREAK_REWARDS.forEach(x => { if (r.chance(0.5)) S.rewards[x.days] = 1; });
+    S.pets.forEach((p, i) => P.ITEMS.forEach(it => { if (it.cat === 'acc' && S.owned[it.id] && r.chance(0.3)) P.wear(S, i, it.id); }));
+    P.ITEMS.forEach(it => { if (S.owned[it.id] && r.chance(0.5)) { P.setRoom(S, it.id); P.place(S, it.id, r.int(0, 300), r.int(0, 240)); } });
+    units.forEach(u => { if (r.chance(0.3)) S.units[u.id] = false; });
+    P.zukanKeys().forEach(k => { if (r.chance(0.3)) S.zukan[k] = { look: P.fixLook(k.split(':')[0], null), name: '' }; }); S.pets.forEach(p => { if (p.gp >= 35) S.zukan[p.kind + ':' + p.branch] = { look: p.look.slice(), name: p.name }; if (p.legend) S.zukan[p.kind + ':L'] = { look: p.look.slice(), name: p.name }; });
+    S.titles = P.TITLES.filter(() => r.chance(0.4)).map(t => t.id); S.title = S.titles.length ? r.pick(S.titles) : null;
+    S.stats.correct = r.int(0, 999); S.stats.types = { a: [3, 1] }; S.stats.maxCombo = r.int(0, 30); S.sound = r.chance(0.5); S.figChoice = r.chance(0.5);
+    return S;
+  };
+  const core = S => JSON.stringify([S.pets.map(p => [p.kind, p.look, p.name, Math.min(p.gp, 63), p.branch, p.legend, Math.min(p.lg, 15), P.SLOTS.map(s => p.acc[s] || null)]), S.cur, S.coins, Math.min(S.days.streak, 63), S.days.total, S.days.last,
+    P.zukanKeys().filter(k => S.zukan[k]), S.titles, S.title, P.STREAK_REWARDS.map(x => !!S.rewards[x.days]), P.ITEMS.filter(it => S.owned[it.id]).map(it => it.id), S.room.wall, S.room.floor]);
+  mainCourses.forEach(function (cid, ci) {
+    const C = M.courses[cid], other = M.courses[mainCourses[(ci + 1) % mainCourses.length]], units = P.units(C);
+    for (let i = 0; i < 200; i++) {
+      const r = U.makeRng(i * 13 + ci), S = randomState(cid, r), pw = P.password.encode(C, S), back = P.password.decode(C, pw, day(0)), chars = Array.from(pw);
+      ok(chars.every(c => M.password.alphabet.indexOf(c) >= 0) && chars.length <= Math.ceil((164 + 100 * S.pets.length) / 6) + 2, cid + ': 記録のことばは ひらがな(' + chars.length + '文字・なかま ' + S.pets.length + '人)');
+      if (!ok(!!back && core(back) === core(S), cid + ': 記録のことばで 元にもどる #' + i)) continue;
+      ok(units.every(u => (back.units[u.id] === false) === (S.units[u.id] === false)), cid + ': えらんだ単元も 引きつぐ #' + i);
+      ok(back.pets.every((p, j) => P.stageOf(p) === P.stageOf(S.pets[j])), cid + ': 段階は そのまま #' + i);
+      if (i < 60) { const k = r.int(0, chars.length - 1), ch = chars.slice(); ch[k] = M.password.alphabet[(M.password.alphabet.indexOf(ch[k]) + 1 + r.int(0, 62)) % 64]; ok(P.password.decode(C, ch.join(''), day(0)) === null, cid + ': 1文字 ちがうと 受けつけない #' + i); ok(P.password.decode(other, pw, day(0)) === null, 'ほかのコースの ことばは 受けつけない'); }
+      // セーブ: 保存 → 読み直しで 同じ。項目が 欠けた古い記録・新しい版の記録でも、なかま・成長・コインは 消えない
+      const json = JSON.stringify(S), again = P.restore(json, cid);
+      ok(!!again && core(again) === core(S) && again.days.streak === S.days.streak && again.days.best === S.days.best && JSON.stringify(again.stats) === JSON.stringify(S.stats) && again.sound === S.sound && again.figChoice === S.figChoice && again.room.placed.length === S.room.placed.length, cid + ': 保存 → 読み直しで 同じ #' + i);
+      ok(JSON.stringify(P.restore(JSON.stringify(again), cid)) === JSON.stringify(again), cid + ': 何度 読み直しても 変わらない #' + i);
+      const old = JSON.parse(json); ['days', 'today', 'units', 'stats', 'review', 'owned', 'room', 'zukan', 'titles', 'title', 'rewards', 'sound', 'figChoice', 'seen', 'combo', 'ver'].forEach(k => { if (r.chance(0.5)) delete old[k]; }); old.pets.forEach(p => { if (r.chance(0.5)) delete p.acc; if (r.chance(0.5)) delete p.unitOk; if (r.chance(0.3)) delete p.lg; });
+      old.ver = 99; old.mirai = { a: 1 };
+      const o2 = tryDo(cid + ': 古い・新しい版の記録の 読みこみ #' + i, () => P.restore(JSON.stringify(old), cid));
+      ok(!!o2 && o2.pets.length === S.pets.length && o2.coins === S.coins && o2.pets.every((p, j) => p.gp === S.pets[j].gp && p.name === S.pets[j].name && p.kind === S.pets[j].kind && P.stageOf(p) >= Math.min(4, P.stageOf(S.pets[j]))), cid + ': 項目が 欠けた記録でも なかま・成長・コインは 残る #' + i);
+      ok(!!o2 && !!o2.room.wall && !!o2.room.floor && Array.isArray(o2.days.stamps) && typeof o2.stats.correct === 'number' && o2.owned.w_cream === 1, cid + ': 欠けた項目は 初期値で 補う #' + i);
+    }
+  });
+  ['', '{', 'null', '[]', '123', '{"v":0}', 'こわれた'].forEach(raw => ok(tryDo('こわれた記録「' + raw + '」', () => P.restore(raw, 'x')) === null, 'こわれた記録「' + raw + '」は 読まずに null(ひかえを使う)'));
+  ['{"v":1}', '{"v":1,"pets":"x","days":5,"room":[1],"stats":null}', '{"v":1,"pets":[null,3,{"kind":"nai","look":"x","gp":"abc","acc":{"head":"f_bed"}},{"kind":"human","gp":-5,"branch":9,"legend":true}],"cur":77,"coins":-9,"today":{"fed":99}}'].forEach(function (raw) {
+    const S = tryDo('おかしな記録の 読みこみ', () => P.restore(raw, 'x'));
+    ok(!!S && S.pets.every(p => P.kindOf(p.kind).id === p.kind && p.gp >= 0 && !p.acc.head && (p.branch === null || p.branch < 4) && P.stageOf(p) >= 1 && !svgOk(P.art.pet(p, {}))) && S.cur >= 0 && S.cur <= Math.max(0, S.pets.length - 1) && S.coins >= 0 && S.today.fed <= P.MEAL && !svgOk(P.art.room(S, {})), 'おかしな値の 記録も 遊べる形に 直して 読む');
+  });
+})();
+
 console.log('\n' + (fails ? '✗ ' + fails + ' 件の 失敗(検査 ' + checks + ' 件)' : '✓ すべて合格(検査 ' + checks + ' 件)'));
 process.exit(fails ? 1 : 0);
