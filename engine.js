@@ -107,6 +107,7 @@ function parseSum(raw) {
 function parseValue(raw) {
   if (typeof raw !== 'string' || raw === '') return null;
   if (SYMS[raw]) return { sym: raw, key: 'sym' + raw, simple: true, num: NaN };
+  if (raw === 'α' || raw === 'β') return { key: 'let' + raw, simple: true, num: NaN, letter: raw };      // 文字のまま答える値(不等式の α、β)
   const sv = parseSum(raw); if (sv !== undefined) return sv;
   const parts = raw.split('/');
   if (parts.length > 2) return null;
@@ -605,8 +606,10 @@ function shapeMarkup(kind, eq, v, a, b) {
 }
 function solMarkup(sol, v) { return shapeMarkup(sol.kind, !!sol.eq, v || 'x', sol.a === undefined ? '' : answerMarkup(sol.a), sol.b === undefined ? '' : answerMarkup(sol.b)); }
 /* x が その答え(範囲)に 入っているか */
-function solContains(sol, x) {
-  const a = sol.a === undefined ? NaN : parseValue(sol.a).num, b = sol.b === undefined ? NaN : parseValue(sol.b).num, e = !!sol.eq;
+/* letters: 答えが 文字(α、β)のときに、検算で使う数値 { α: 1, β: 4 } */
+function solNum(raw, letters) { const v = parseValue(raw); return v.letter ? (letters || {})[v.letter] : v.num; }
+function solContains(sol, x, letters) {
+  const a = sol.a === undefined ? NaN : solNum(sol.a, letters), b = sol.b === undefined ? NaN : solNum(sol.b, letters), e = !!sol.eq;
   switch (sol.kind) {
     case 'between': return e ? (a <= x && x <= b) : (a < x && x < b);
     case 'outside': return e ? (x <= a || b <= x) : (x < a || b < x);
@@ -1089,7 +1092,8 @@ function checkQuestion(q) {
       if (n === undefined) return '不等式の形が ちがう: ' + sl.kind;
       const vals = [sl.a, sl.b].slice(0, n).map(function (x) { return typeof x === 'string' ? parseValue(x) : null; });
       if (!vals.every(function (x) { return x && !x.sym && !x.pm; })) return '不等式の答えの値が 正しくない(± は 使えない)';
-      if (n === 2 && !(vals[0].num < vals[1].num)) return '不等式の答えは a < b の順に書く';
+      if (vals.some(function (x) { return x.letter && !(q.letters && isFinite(q.letters[x.letter])); })) return '文字で答える不等式には letters(検算用の数値)が必要';
+      if (n === 2 && !(solNum(sl.a, q.letters) < solNum(sl.b, q.letters))) return '不等式の答えは a < b の順に書く';
       if (q.shapes && (q.shapes.indexOf(sl.kind) < 0 || !q.shapes.every(function (k) { return SHAPES[k] !== undefined; }))) return 'shapes に 正解の形が ない';
       for (let i = 0; i < q.mistakes.length; i++) if (!q.mistakes[i].sol || SHAPES[q.mistakes[i].sol.kind] === undefined) return '誤答の sol が おかしい';
     } else if (kind === 'table') {
@@ -2076,7 +2080,8 @@ M.start = function (courseId, mount) {
         /* keys に ± か + があれば、2±√7 のように 2つの項を つなげる。tm は いま打っている項 */
         const sumOK = q.keys.indexOf('±') >= 0 || q.keys.indexOf('+') >= 0, tm = v.slice(Math.max(v.lastIndexOf('+'), v.lastIndexOf('±'), v.lastIndexOf('-')) + 1);
         const canOp = function () { return sumOK && p === 'num' && /\d$/.test(v) && v[0] !== '±' && !hasOp(v) && v.indexOf('π') < 0 && v.indexOf('.') < 0; };
-        if (/^\d$/.test(k)) { if (c.num === '+' || c.num === '<' || c.num === '>') c.num = ''; if (c[p].length < 10 && c[p].slice(-1) !== 'π') c[p] += k; }
+        if (k === 'α' || k === 'β') { if (q.keys.indexOf(k) >= 0) { c.num = k; c.den = null; c.part = 'num'; } }
+        else if (/^\d$/.test(k)) { if (c.num === '+' || c.num === '<' || c.num === '>' || c.num === 'α' || c.num === 'β') c.num = ''; if (c[p].length < 10 && c[p].slice(-1) !== 'π') c[p] += k; }
         else if (k === '-') { if (p === 'num' && (v === '' || SYMS[v])) c.num = v === '-' ? '' : '-'; else if (canOp()) c[p] += '-'; }
         else if (k === '±') { if (p === 'num' && v === '' && sumOK) c.num = '±'; else if (canOp()) c[p] += '±'; }
         else if (k === '+' && canOp()) c[p] += '+';
@@ -2109,7 +2114,7 @@ M.start = function (courseId, mount) {
       modal = { noTap: true, key: function (e) {
         const k = e.key;
         if ((kind === 'choice' || kind === 'order') && /^[1-9]$/.test(k)) pick(parseInt(k, 10) - 1);
-        else if (/^\d$/.test(k) || k === '-' || k === '+' || k === '<' || k === '>' || k === '.' || k === '±') key(k);
+        else if (/^\d$/.test(k) || k === '-' || k === '+' || k === '<' || k === '>' || k === '.' || k === '±' || k === 'α' || k === 'β') key(k);
         else if (k === 'm' && q.keys.indexOf('±') >= 0) key('±');
         else if (k === 'Backspace') key(kind === 'order' ? 'undo' : '⌫'); else if (k === 'Enter') key('ok'); else if (k === 'Escape') key('back');
         else if (k === 'Tab' || k === 'ArrowRight' || k === 'ArrowDown') key('next');

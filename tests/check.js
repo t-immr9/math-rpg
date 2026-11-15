@@ -116,7 +116,7 @@ function perms(n) { const out = []; (function rec(rest, acc) { if (!rest.length)
 function typeable(raw, keys) {
   if (raw === '*') return true;
   if (raw === '-') return true;
-  if (raw === '+' || raw === '<' || raw === '>') return keys.indexOf(raw) >= 0;
+  if (raw === '+' || raw === '<' || raw === '>' || raw === 'α' || raw === 'β') return keys.indexOf(raw) >= 0;
   if (!/^[-0-9√π/.+±()]+$/.test(raw)) return false;
   const pf = /^\((.+)\)\/(.+)$/.exec(raw), parts = pf ? [pf[1], pf[2]] : raw.split('/');
   if (parts.length > 1 && keys.indexOf('分数') < 0) return false;
@@ -282,6 +282,9 @@ section('エンジン: 和・差の形の値(2±√7 など)');
   const q = S('outside', false, '2-√7', '2+√7');
   ok(M.checkQuestion(q) === null && M.judgeAny(q, I('outside', false, ['2-√7', '2+√7'])).result === 'correct' && M.answerText(q) === 'x < 2 - √7, 2 + √7 < x', 'x < 2−√7, 2+√7 < x(' + M.answerText(q) + ')');
   ok(M.judgeAny(q, I('outside', false, ['2+√7', '2-√7'])).result === 'wrong' && M.judgeAny(q, I('between', false, ['2-√7', '2+√7'])).result === 'wrong' && M.judgeAny(q, I('outside', false, ['(4-2√7)/2', '2+√7'])).result === 'unsimplified', '境界の 左右が逆・内外が逆は 不正解、約分前は 入れ直し');
+  const ql = { input: 'ineq', sol: { kind: 'outside', a: 'α', b: 'β' }, letters: { α: 1, β: 4 }, mistakes: [], explain: ['a', 'b'], text: 't', hint: 'h', keys: ['α', 'β'] };
+  ok(M.checkQuestion(ql) === null && M.judgeAny(ql, { kind: 'outside', eq: false, raws: ['α', 'β'] }).result === 'correct' && M.judgeAny(ql, { kind: 'outside', eq: false, raws: ['β', 'α'] }).result === 'wrong' && M.judgeAny(ql, { kind: 'between', eq: false, raws: ['α', 'β'] }).result === 'wrong' && M.answerText(ql) === 'x < α, β < x' && M.sol.contains(ql.sol, 0, ql.letters) && !M.sol.contains(ql.sol, 2, ql.letters), '文字 α、β で答える不等式');
+  ok(typeof M.checkQuestion(Object.assign({}, ql, { letters: undefined })) === 'string' && typeable('α', ['α', 'β']) && !typeable('α', ['√']), '文字の答えには letters と キーが必要');
   ok(M.sol.contains(q.sol, -1) && !M.sol.contains(q.sol, 0) && M.sol.contains(q.sol, 5) && !M.sol.contains(q.sol, 2 - Math.sqrt(7)), '境界が √ を含む範囲に 入るかどうか');
   ok(typeof M.checkQuestion(S('between', false, '2+√7', '2-√7')) === 'string' && typeof M.checkQuestion(S('gt', false, '2±√7')) === 'string', '境界が 大小逆・± の不等式は 問題として 出さない');
   ok(typeable('(3±√5)/2', ['±', '√', '分数']) && !typeable('(3±√5)/2', ['±', '√']) && !typeable('2±√7', ['+', '√']) && typeable('2-√7', ['+', '√']) && !typeable('2-√7', ['√']) && !typeable('2+√7', ['±', '√']), 'キーで入力できるかの 判定');
@@ -512,7 +515,7 @@ ids.forEach(function (cid) {
       ok(Array.isArray(q.explain) && q.explain.length >= 2 && q.explain.length <= 3, tag + ': 解説は 2〜3行');
       (q.explain || []).forEach((l, k) => renderOk(tag + ' 解説' + (k + 1), l));
       if (q.fig) { const fe = figOk(tryDo(tag + ' 図', () => M.figure.svg(q.fig))); ok(!fe, tag + ' 図: ' + fe); }
-      ok(q.keys.length <= (q.input === 'ineq' ? 3 : 4) && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>', '.', '±'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで(不等式は 3つまで)・決まった名前');
+      ok(q.keys.length <= (q.input === 'ineq' ? 3 : 4) && q.keys.every(k => ['√', 'π', '分数', '+', '<', '>', '.', '±', 'α', 'β'].indexOf(k) >= 0), tag + ': 追加キーは 4つまで(不等式は 3つまで)・決まった名前');
       renderOk(tag + ' 正解の表示', M.answerText(q));
       ok(M.judgeAny(q, M.correctInput(q)).result === 'correct', tag + ': 正解を入れると 正解になる');
       ok(M.judgeAny(q, M.wrongInput(q)).result === 'wrong', tag + ': まちがいを入れると 不正解になる');
@@ -616,22 +619,22 @@ ids.forEach(function (cid) {
         if (q.verify) ok(tryDo(tag + ' verify', () => q.verify()) === true, tag + ': 正しい図のデータが 検算(verify)を通る');
         else ok(t.noNum === true, tag + ': 図をかく問題には verify が必要');
       } else {
-        const sl = q.sol, vs = [sl.a, sl.b].filter(x => x !== undefined), nums = vs.map(x => U.parseValue(x).num);
+        const sl = q.sol, LT = q.letters, vs = [sl.a, sl.b].filter(x => x !== undefined), nums = vs.map(x => U.parseValue(x).letter ? LT[x] : U.parseValue(x).num);
         ok(vs.every(x => U.parseValue(x).simple && typeable(x, q.keys)), tag + ': 不等式の値は 最も簡単な形で、キーで入力できる ' + JSON.stringify(vs));
         const xs = [0, -1000, 1000, 0.123];
         // 境界ちょうどの数は、√ を含まない値のときだけ 代入する(√ を含む値は 小数にすると ごくわずかに ずれるため、すぐ前後の数で 確かめる)
         nums.forEach((v, k) => { if (vs[k].indexOf('√') < 0) xs.push(v); xs.push(v - 1e-6, v + 1e-6, v - 0.5, v + 0.5, v - 7, v + 7); });
         if (nums.length === 2) xs.push((nums[0] + nums[1]) / 2);
         // 正解の範囲を、もとの不等式に 数を代入して 確かめる
-        if (typeof q.inside === 'function') xs.forEach(x => ok(M.sol.contains(sl, x) === !!q.inside(x), tag + ': x = ' + x + ' が 答えの範囲に 入るかどうかが、もとの不等式と 合わない  ' + (q.expr || '') + ' → ' + M.answerText(q)));
+        if (typeof q.inside === 'function') xs.forEach(x => ok(M.sol.contains(sl, x, LT) === !!q.inside(x), tag + ': x = ' + x + ' が 答えの範囲に 入るかどうかが、もとの不等式と 合わない  ' + (q.expr || '') + ' → ' + M.answerText(q)));
         else ok(t.noNum === true, tag + ': 不等式の問題には inside(x)(もとの条件を 代入して確かめる関数)が必要');
         // ほかの形・等号の有無を 入れたとき、同じ範囲のときだけ 正解になる
         const a0 = vs[0] || '0', b0 = vs[1] || (Number.isInteger(nums[0] === undefined ? 0 : nums[0]) ? String((nums[0] === undefined ? 0 : nums[0]) + 1) : null);
         M.sol.shapes.forEach(k => [false, true].forEach(function (eq) {
           if (b0 === null && ['between', 'outside'].indexOf(k) >= 0) return;
           const inp = { kind: k, eq: eq, raws: ['between', 'outside'].indexOf(k) >= 0 ? [a0, b0] : ['all', 'none'].indexOf(k) >= 0 ? [] : [a0] };
-          const mine = { kind: k, eq: eq, a: inp.raws[0], b: inp.raws[1] }, pts = xs.concat([U.parseValue(a0).num, b0 === null ? 0 : U.parseValue(b0).num, U.parseValue(a0).num + 1e-6, U.parseValue(a0).num - 1e-6]);
-          const same = pts.every(x => M.sol.contains(mine, x) === M.sol.contains(sl, x));
+          const mine = { kind: k, eq: eq, a: inp.raws[0], b: inp.raws[1] }, nv = r => (U.parseValue(r).letter ? LT[r] : U.parseValue(r).num), pts = xs.concat([nv(a0), b0 === null ? 0 : nv(b0), nv(a0) + 1e-6, nv(a0) - 1e-6]);
+          const same = pts.every(x => M.sol.contains(mine, x, LT) === M.sol.contains(sl, x, LT));
           ok((M.judgeAny(q, inp).result === 'correct') === same, tag + ': 「' + M.sol.markup(mine, q.solVar) + '」の判定が おかしい(正解 ' + M.answerText(q) + ')');
         }));
         if (q.mistakes.length) withMistake++;
