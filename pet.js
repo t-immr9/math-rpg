@@ -423,6 +423,10 @@ P.kindOf = kindOf; P.lookCount = lookCount; P.fixLook = fixLook; P.formName = fo
 P.units = unitsOf; P.legendPool = legendPool; P.selectedUnits = selectedUnits; P.pickMeal = pickMeal; P.pickSnack = pickSnack; P.pickLegend = pickLegend; P.typeId = tid;
 P.newState = newState; P.newPet = newPet; P.stageOf = stageOf; P.stageName = stageName; P.gauge = gauge; P.decideBranch = decideBranch; P.touch = touch; P.mood = mood; P.record = record;
 P.checkTitles = checkTitles; P.titleName = titleName; P.adoptInfo = adoptInfo; P.adopt = adopt; P.restyle = restyle; P.buy = buy; P.wear = wear; P.place = place; P.unplace = unplace; P.setRoom = setRoom;
+/* はじめからやり直す: そのコースの ペットの記録だけを 消す(RPG の mathrpg: や、ほかのコースの記録は さわらない)*/
+function saveKeys(courseId) { const k = 'mathpet:' + courseId; return [k, k + ':bak', k + ':broken']; }
+function wipeSave(storage, courseId) { const keys = saveKeys(courseId); keys.forEach(function (k) { try { storage.removeItem(k); } catch (e) { /* 消せない端末でも 止まらない */ } }); return keys; }
+P.saveKeys = saveKeys; P.wipeSave = wipeSave;
 P.restore = restore; P.nameOk = nameOk; P.password = { encode: pwEncode, decode: pwDecode };
 
 /* ===== 2. 絵(SVG を コードで かく。画像ファイルは 使わない)=====
@@ -1057,8 +1061,30 @@ P.start = function (courseId, app) {
     sheet('メニュー', '<div class="col"><button class="big" data-a="cal">カレンダー(スタンプ)</button><button class="big" data-a="photo">写真モード</button><button class="big" data-a="rec">きろく(単元ごとの 正解)</button>' +
       '<button class="big" data-a="snd">音: ' + (api.soundOn() ? 'オン' : 'オフ') + '</button><button class="big" data-a="fig">図の問題: ' + (S.figChoice ? 'えらぶ(4つの図から)' : 'かく') + '</button>' +
       '<button class="big" data-a="pw">記録のことば(機種変更・ひっこし)</button>' + (adoptInfo(S).can ? '<button class="big gold" data-a="adopt">あたらしい なかまを むかえる</button>' : '') +
-      '<a class="big link" href="index.html?course=' + course.id + '">この範囲の RPG で あそぶ</a><a class="big link" href="pet.html">コースを えらびなおす</a></div><p class="note">' + esc(course.title.replace('クエスト', '')) + ' / 記録は この端末に 自動で 保存されます。</p>',
-      { cal: function () { calSheet(0); }, photo: photoSheet, rec: recSheet, snd: function () { setSound(!api.soundOn()); menuSheet(); }, fig: function () { S.figChoice = !S.figChoice; save(); menuSheet(); }, pw: pwSheet, adopt: adoptFlow });
+      '<a class="big link" href="index.html?course=' + course.id + '">この範囲の RPG で あそぶ</a><a class="big link" href="pet.html">コースを えらびなおす</a><button class="big sub danger" data-a="reset">はじめから やり直す</button></div><p class="note">' + esc(course.title.replace('クエスト', '')) + ' / 記録は この端末に 自動で 保存されます。</p>',
+      { cal: function () { calSheet(0); }, photo: photoSheet, rec: recSheet, snd: function () { setSound(!api.soundOn()); menuSheet(); }, fig: function () { S.figChoice = !S.figChoice; save(); menuSheet(); }, pw: pwSheet, adopt: adoptFlow, reset: function () { resetSheet(1); } });
+  }
+  /* はじめから やり直す: 1回目は 記録のことばを 控える案内、2回目は 最後の確認。消すのは このコースの ペットの記録だけ */
+  function resetSheet(step) {
+    const pw = S.pets.length ? pwEncode(course, S) : '', show = (pw.match(/.{1,5}/g) || []).join(' ');
+    if (step === 1) {
+      sheet('はじめから やり直す(1/2)', '<p class="note">いまの なかま(' + S.pets.map(function (p) { return esc(p.name); }).join('・') + ')・コイン・部屋・ずかん・称号・カレンダーの スタンプが すべて 消えて、キャラクター選びから やり直しになります。</p>' +
+        '<p class="note"><b>消す前に、下の「記録のことば」を メモか スクリーンショットで 控えておこう。</b>控えておけば、メニューの「記録のことば」から いつでも もとに もどせます。</p>' +
+        (pw ? '<div class="pw">' + show + '</div><button class="big sub" data-a="copy">記録のことばを コピーする</button>' : '') +
+        '<p class="note">消えるのは この端末の「' + esc(course.title.replace('クエスト', '')) + '」の ペットの記録だけです。RPG の記録や、ほかのコースの ペットは そのまま。</p>' +
+        '<div class="col"><button class="big sub" data-a="close">やめる</button><button class="big danger" data-a="next">控えたので 次へ</button></div>',
+        { copy: function () { try { navigator.clipboard.writeText(pw); toast('コピーした'); } catch (e) { toast('コピーできなかった。メモしてね'); } }, next: function () { resetSheet(2); }, close: menuSheet });
+    } else {
+      sheet('はじめから やり直す(2/2)', '<div class="pvs">' + S.pets.slice(0, 3).map(function (p) { return '<div><div class="pv">' + petSVG(p, { mood: 'lonely' }) + '</div></div>'; }).join('') + '</div>' +
+        '<p class="note" style="text-align:center"><b>ほんとうに 消して いいですか?</b><br>この操作は もとに もどせません(記録のことばが あれば もどせます)。</p>' +
+        '<div class="col"><button class="big" data-a="close">やめる(このまま 遊ぶ)</button><button class="big danger" data-a="wipe">消して はじめから やり直す</button></div>',
+        { wipe: doReset, close: menuSheet });
+    }
+  }
+  function doReset() {
+    if (DEV) { S = newState(course.id); posX.length = 0; closeSheet(); toast('(開発用表示なので 保存は さわらない)'); return; }
+    try { wipeSave(localStorage, course.id); } catch (e) { /* 保存できない端末 */ }
+    S = null; location.reload();                                                   // 記録が ない状態で 開き直す → キャラクター選びから
   }
   function calSheet(back) {
     const t = now(), d0 = new Date(t.getFullYear(), t.getMonth() - back, 1), y = d0.getFullYear(), m = d0.getMonth(), n = new Date(y, m + 1, 0).getDate(), today = dayKey(t);
@@ -1148,6 +1174,7 @@ P.start = function (courseId, app) {
     else if (a[0] === 'reward') showEvents({ stageFrom: 1, stageTo: 1, rewards: [STREAK_REWARDS[1]], titles: [] });
     else if (a[0] === 'create') { S.pets = []; createScreen('new'); }
     else if (a[0] === 'edit') { startEdit(); editSel = 'f_bed'; drawEdit(); render(); }
+    else if (a[0] === 'reset') resetSheet(a[1] === '2' ? 2 : 1);
     else if (a[0] === 'auto') autoTest();
     else if ({ feed: 1, shop: 1, zukan: 1, menu: 1, photo: 1, cal: 1, rec: 1, pw: 1, room2: 1, dress: 1 }[a[0]]) { if (a[1]) shopTab = a[1]; ({ feed: feedSheet, shop: shopSheet, zukan: zukanSheet, menu: menuSheet, photo: photoSheet, cal: function () { calSheet(0); }, rec: recSheet, pw: pwSheet, room2: roomSheet, dress: dressSheet })[a[0]](); }
   }
@@ -1190,6 +1217,11 @@ P.start = function (courseId, app) {
       const r2 = await Promise.race([createScreen('adopt'), wait(50).then(function () { $('pnm').value = 'にごう'; $('psheet').querySelector('[data-a="ok"]').click(); return wait(50).then(function () { return 'x'; }); })]); adopt(S, 'animal', [2, 1, 0, 3], 'にごう', now()); render();
       log.push('2人目 → なかま=' + S.pets.map(function (p) { return p.name + ':' + p.kind; }).join(',') + ' おせわ中=' + pet().name);
       for (const f2 of [feedSheet, zukanSheet, roomSheet, dressSheet, menuSheet, photoSheet, recSheet, pwSheet, function () { calSheet(0); }]) { f2(); closeSheet(); } log.push('全部の画面を ひらいて とじた');
+      menuSheet(); $('psheet').querySelector('[data-a="reset"]').click(); const rs1 = $('psheet').querySelector('.shh b').textContent; $('psheet').querySelector('[data-a="close"]').click();
+      const kept = S.pets.length; $('psheet').querySelector('[data-a="reset"]').click(); $('psheet').querySelector('[data-a="next"]').click(); const rs2 = $('psheet').querySelector('.shh b').textContent; $('psheet').querySelector('[data-a="close"]').click();
+      const kept2 = S.pets.length; $('psheet').querySelector('[data-a="reset"]').click(); $('psheet').querySelector('[data-a="next"]').click(); $('psheet').querySelector('[data-a="wipe"]').click();
+      log.push('はじめから やり直す: 1回目「' + rs1 + '」→ やめる なかま=' + kept + ' / 2回目「' + rs2 + '」→ やめる なかま=' + kept2 + ' / 消す → なかま=' + S.pets.length + ' コイン=' + S.coins);
+      S = P.restore(JSON.stringify(Object.assign(newState(course.id), { pets: [newPet('animal', [0], 'にごう')] })), course.id); render();
       const pw = pwEncode(course, S), back = pwDecode(course, pw, now()); log.push('記録のことば(' + Array.from(pw).length + '文字)→ ' + (back ? back.pets.map(function (p) { return p.name + ' 段階' + stageOf(p); }).join(',') + ' コイン=' + back.coins + ' ずかん=' + zukanCount(back) : '読めない'));
       const again = restore(JSON.stringify(S), course.id); log.push('保存 → 読み直し: ' + (JSON.stringify(again) === JSON.stringify(restore(JSON.stringify(again), course.id)) && again.pets.length === S.pets.length && again.coins === S.coins ? '同じ' : 'ちがう') + ' / 完了');
     } catch (e) { log.push('EXCEPTION ' + (e.stack || e)); }

@@ -1134,6 +1134,25 @@ const P = require('../pet.js');
       ok(!!o2 && !!o2.room.wall && !!o2.room.floor && Array.isArray(o2.days.stamps) && typeof o2.stats.correct === 'number' && o2.owned.w_cream === 1, cid + ': 欠けた項目は 初期値で 補う #' + i);
     }
   });
+  section('育成ゲーム: はじめから やり直す(そのコースの ペットの記録だけ 消す)');
+  (function () {
+    const mem = function () { const d = {}; return { d: d, getItem: k => (k in d ? d[k] : null), setItem: (k, v) => { d[k] = String(v); }, removeItem: k => { delete d[k]; } }; };
+    const ids = Object.keys(M.courses);
+    ids.forEach(function (cid) {
+      const st = mem(), S = randomState(mainCourses[0], U.makeRng(7)), json = JSON.stringify(S);
+      ids.forEach(id => { ['mathpet:' + id, 'mathpet:' + id + ':bak', 'mathpet:' + id + ':broken', 'mathrpg:' + id].forEach(k => st.setItem(k, json)); });
+      st.setItem('mathpetx:' + cid, 'x'); st.setItem('other', 'y');
+      const before = Object.keys(st.d).length, keys = P.wipeSave(st, cid);
+      ok(keys.join() === ['mathpet:' + cid, 'mathpet:' + cid + ':bak', 'mathpet:' + cid + ':broken'].join() && keys.every(k => st.getItem(k) === null), cid + ': やり直すと このコースの ペットの記録(ひかえも)が 消える');
+      ok(Object.keys(st.d).length === before - 3, cid + ': 消えるのは 3つだけ');
+      ok(st.getItem('mathrpg:' + cid) === json && ids.every(id => id === cid || (st.getItem('mathpet:' + id) === json && st.getItem('mathpet:' + id + ':bak') === json)) && st.getItem('mathpetx:' + cid) === 'x' && st.getItem('other') === 'y', cid + ': RPG の記録・ほかのコースの ペットは そのまま');
+      ok(P.restore(st.getItem('mathpet:' + cid), cid) === null, cid + ': 消したあとは 記録なし(キャラクター選びから)');
+      const back = P.password.decode(M.courses[mainCourses[0]], P.password.encode(M.courses[mainCourses[0]], S), day(0));
+      if (cid === mainCourses[0]) ok(!!back && core(back) === core(S), cid + ': 消す前に 控えた 記録のことばで もとに もどせる');
+    });
+    const bad = { removeItem: () => { throw new Error('x'); } };
+    ok(tryDo('消せない端末でも 止まらない', () => P.wipeSave(bad, 'a')).length === 3, '消せない端末でも 止まらない');
+  })();
   ['', '{', 'null', '[]', '123', '{"v":0}', 'こわれた'].forEach(raw => ok(tryDo('こわれた記録「' + raw + '」', () => P.restore(raw, 'x')) === null, 'こわれた記録「' + raw + '」は 読まずに null(ひかえを使う)'));
   ['{"v":1}', '{"v":1,"pets":"x","days":5,"room":[1],"stats":null}', '{"v":1,"pets":[null,3,{"kind":"nai","look":"x","gp":"abc","acc":{"head":"f_bed"}},{"kind":"human","gp":-5,"branch":9,"legend":true}],"cur":77,"coins":-9,"today":{"fed":99}}'].forEach(function (raw) {
     const S = tryDo('おかしな記録の 読みこみ', () => P.restore(raw, 'x'));
