@@ -10,7 +10,7 @@
 | `index.html` | 起動画面(コース選択)と CSS | コースを追加したら `COURSES` に1行足す |
 | `engine.js` | ゲーム本体(描画・戦闘・入力・セーブ・音・ダンジョン生成・判定・数式表示) | 全コース共通の機能を直すときだけ |
 | `courses/<コースID>.js` | コース(問題の型・敵・マップ・ダンジョン・称号) | 問題の追加・調整はここ |
-| `courses/suu1-2gakki-kimatsu.js` | 数学I 2学期期末コース(型 69) | 数学I の問題の追加・調整 |
+| `courses/suu1-2gakki-kimatsu.js` | 数学I 2学期期末コース(型 74) | 数学I の問題の追加・調整 |
 | `courses/suuA-2gakki-kimatsu.js` | 数学A 2学期期末コース(型 45) | 数学A の問題の追加・調整 |
 | `courses/tameshi-suu1a.js` | 試しのコース(図・選ぶ・並べ替え・小数・不等式の見本)。本番ではないので `index.html` の一覧には出さない | 新しい機能の書き方の見本・動作確認 |
 | `tests/check.js` | 自動テスト(`courses/` の全コースと、育成ゲーム `pet.js` を検査) | 新しい検査を足すとき |

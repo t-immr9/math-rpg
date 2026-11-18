@@ -440,6 +440,47 @@ types['cnt-vertex'] = {
     };
   }
 };
+types['m-dneg'] = {
+  name: 'D < 0(実数解をもたない)となる m の範囲', level: 1,
+  gen: function (R) {
+    const a = R.pick([1, 1, 2, 3]), b = pickUntil(function () { return R.int(-7, 7); }, function (x) { return x !== 0; }, 6), v = F(b * b, 4 * a), sol = { kind: 'gt', a: v };
+    return {
+      text: '2次方程式 ' + poly(a, b, 0) + ' + m = 0 が 実数解をもたないような 定数 m の値の範囲を求めよ。', sol: sol, solVar: 'm', keys: ['分数'], shapes: ['between', 'outside', 'gt', 'lt'],
+      inside: function (m) { return z(b * b - 4 * a * m) < 0; },
+      hint: '実数解をもたない ⇔ 判別式 D < 0',
+      explain: ['実数解をもたない ⇔ D < 0', 'D = ' + b * b + term(-4 * a, 'm', false) + ' < 0 より ' + 4 * a + 'm > ' + b * b, M.sol.markup(sol, 'm')],
+      mistakes: [{ sol: { kind: 'lt', a: v }, tag: 'ineq-dir', msg: '負の数で 割ると、不等号の向きが 逆になるよ' }, { sol: { kind: 'gt', eq: true, a: v }, tag: 'disc-eq', msg: 'D = 0 のときは 重解をもつ。等号は つかないよ' },
+        a > 1 ? { sol: { kind: 'gt', a: F(b * b, 4) }, tag: 'disc-a', msg: 'D = b^2 - 4ac の a = ' + a + ' を かけ忘れていないかな' } : { sol: { kind: 'gt', a: N(b * b) }, tag: 'disc-4', msg: 'D = b^2 - 4m。4 で 割るのを 忘れていないかな' }]
+    };
+  }
+};
+types['m-tangent'] = {
+  name: 'x軸に接するときの m の値と 接点の x 座標', level: 2,
+  gen: function (R) {
+    const a = R.pick([1, 1, 2, 3]), hint = 'x軸に接する ⇔ D = 0。接点の x 座標は 頂点の x 座標 -{b/2a}', form = 'm = □、x = □';
+    function xLine(bb, x0) { return '接点の x 座標は x = -{b/2a} = -{' + (bb < 0 ? '(' + bb + ')' : bb) + '/' + 2 * a + '} = ' + x0; }
+    if (R.chance(0.5)) {      // (a) m が 1つに決まる: y = ax^2 + bx + m
+      const t = pickUntil(function () { return R.int(-4, 4); }, function (x) { return x !== 0; }, 2), b = -2 * a * t, m = a * t * t, ans = [N(m), N(t)];
+      return {
+        text: '2次関数 y = ' + poly(a, b, 0) + ' + m の グラフが x軸に接するような 定数 m の値と、そのときの 接点の x 座標を求めよ。', form: form, answers: ans, num: [b * b / (4 * a), -b / (2 * a)],
+        hint: hint,
+        explain: ['x軸に接する ⇔ D = 0', 'D = ' + b * b + term(-4 * a, 'm', false) + ' = 0 より m = ' + m, xLine(b, t)],
+        mistakes: U.mistakes(ans, [{ answers: [N(m), N(-t)], tag: 'tangent-sign', msg: '接点の x 座標は -{b/2a}。符号に注意しよう' }, { answers: [F(b * b, a), '*'], tag: 'disc-4', msg: 'D = b^2 - 4am。4 を かけ忘れていないかな' }])
+      };
+    }
+    // (b) m が 2つある: y = ax^2 ± mx + c(m の符号を 指定して 1組だけ 答える)
+    const t = R.int(1, 3), c = a * t * t, s = R.pick([1, -1]), pos = R.chance(0.5), m = pos ? 2 * a * t : -2 * a * t, x0 = -(s * m) / (2 * a), ans = [N(m), N(x0)];
+    const mm = (pos ? 1 : -1) * Math.sqrt(4 * a * c);
+    return {
+      text: '2次関数 y = ' + term(a, 'x^2', true) + (s > 0 ? ' + ' : ' - ') + 'mx' + term(c, '', false) + ' の グラフが x軸に接するとき、m ' + (pos ? '>' : '<') + ' 0 となる 定数 m の値と、そのときの 接点の x 座標を求めよ。',
+      form: form, answers: ans, num: [mm, -(s * mm) / (2 * a)],
+      hint: hint,
+      explain: ['x軸に接する ⇔ D = m^2 - ' + 4 * a * c + ' = 0 より m = ±' + 2 * a * t, 'm ' + (pos ? '>' : '<') + ' 0 だから m = ' + m, xLine(s * m, x0)],
+      mistakes: U.mistakes(ans, [{ answers: [N(-m), N(-x0)], tag: 'pm-pick', msg: 'm ' + (pos ? '> 0' : '< 0') + ' のほうを 答えよう' }, { answers: [N(m), N(-x0)], tag: 'tangent-sign', msg: '接点の x 座標は -{b/2a}。符号に注意しよう' },
+        { answers: [N(pos ? a * t : -a * t), '*'], tag: 'disc-4', msg: 'D = m^2 - 4·' + a + '·' + c + '。4 を かけ忘れていないかな' }])
+    };
+  }
+};
 
 /* ==================== 不等式の塔 ==================== */
 types['ineq-int'] = {
@@ -585,6 +626,54 @@ types['ineq-vertex'] = {
       hint: '頂点の位置と 凸の向きから、グラフが x軸より 上にあるか 下にあるかを 見よう',
       explain: [(a > 0 ? '下に凸で 頂点 (' : '上に凸で 頂点 (') + p + ', ' + q + ') が x軸の ' + (a > 0 ? '上' : '下'), 'グラフは いつも x軸より ' + (a > 0 ? '上(y > 0)' : '下(y < 0)'), all ? 'すべての実数' : '解なし'],
       mistakes: [{ sol: { kind: all ? 'none' : 'all' }, tag: 'all-none', msg: 'グラフが x軸より 上なら y > 0、下なら y < 0。「すべての実数」と「解なし」が 逆だよ' }, { sol: { kind: 'except' }, tag: 'vertex-zero', msg: 'グラフは x軸と 交わらないので、0 になる x は ないよ' }]
+    };
+  }
+};
+types['m-allreal'] = {
+  name: 'すべての実数で成り立つ条件(x^2 の係数が 1)', level: 3,
+  gen: function (R) {
+    const k = R.int(0, 2), head = 'すべての実数 x について 2次不等式 ', tail = ' > 0 が 成り立つような 定数 m の値の範囲を求めよ。';
+    let ex, r1, r2, inside, dLine, extra = null;
+    if (k === 0) {              // x^2 + mx + h^2
+      const h = R.int(1, 4), c = h * h; r1 = -2 * h; r2 = 2 * h;
+      ex = 'x^2 + mx + ' + c; inside = function (m) { return z(m * m - 4 * c) < 0; };
+      dLine = 'D = m^2 - ' + 4 * c + ' = ' + facPair(r1, r2).replace(/x/g, 'm') + ' < 0';
+      extra = { sol: { kind: 'between', a: N(-h), b: N(h) }, tag: 'disc-4', msg: 'D = m^2 - 4·' + c + '。4 を かけ忘れていないかな' };
+    } else if (k === 1) {       // x^2 + (m + s)x + h^2
+      const h = R.int(1, 3), c = h * h, s = pickUntil(function () { return R.int(-3, 3); }, function (x) { return x !== 0; }, 1); r1 = -s - 2 * h; r2 = -s + 2 * h;
+      ex = 'x^2 + (m' + term(s, '', false) + ')x + ' + c; inside = function (m) { return z((m + s) * (m + s) - 4 * c) < 0; };
+      dLine = 'D = (m' + term(s, '', false) + ')^2 - ' + 4 * c + ' = ' + facPair(r1, r2).replace(/x/g, 'm') + ' < 0';
+    } else {                    // x^2 ± 2mx + pm + q
+      const v = pickUntil(function () { return [R.int(-4, 4), R.int(-4, 4)]; }, function (v) { return v[0] < v[1] && v[0] + v[1] !== 0; }, [-1, 2]), p = v[0] + v[1], q = -v[0] * v[1], sg = R.pick([1, -1]);
+      r1 = v[0]; r2 = v[1];
+      ex = 'x^2 ' + (sg > 0 ? '+' : '-') + ' 2mx' + term(p, 'm', false) + term(q, '', false); inside = function (m) { return z(m * m - p * m - q) < 0; };
+      dLine = 'D/4 = m^2 - (' + term(p, 'm', true) + term(q, '', false) + ') = ' + facPair(r1, r2).replace(/x/g, 'm') + ' < 0';
+    }
+    const sol = { kind: 'between', a: N(r1), b: N(r2) };
+    const mis = [{ sol: { kind: 'outside', a: N(r1), b: N(r2) }, tag: 'allreal-d', msg: 'すべての x で 正 ⇔ グラフが x軸と 交わらない ⇔ D < 0' }, { sol: { kind: 'between', eq: true, a: N(r1), b: N(r2) }, tag: 'ineq-eq', msg: 'D = 0 のときは 接点で 0 になるので、> 0 は 成り立たないよ' }];
+    if (extra) mis.push(extra);
+    return {
+      text: head + ex + tail, sol: sol, solVar: 'm', shapes: ['between', 'outside', 'gt', 'lt'], inside: inside,
+      hint: 'x^2 の係数が 正なので、すべての x で > 0 ⇔ グラフが x軸と 共有点をもたない ⇔ D < 0',
+      explain: ['すべての x で成り立つ ⇔ D < 0', dLine, M.sol.markup(sol, 'm')],
+      mistakes: mis
+    };
+  }
+};
+types['m-allreal-a'] = {
+  name: 'x^2 の係数が文字のとき すべての実数で成り立つ条件', level: 3,
+  gen: function (R) {
+    const b = R.int(1, 3), divs = [1, 2, 3, 4, 6, 9].filter(function (d) { return (b * b) % d === 0; }), d = R.pick(divs), r1 = -d, r2 = b * b / d, c = d - r2, s = R.pick([1, -1]);
+    const sol = { kind: 'gt', a: N(r2) }, aac = c === 0 ? 'a^2' : 'a(a' + term(c, '', false) + ')';
+    return {
+      text: 'すべての実数 x について 2次不等式 ax^2 ' + (s > 0 ? '+' : '-') + ' ' + 2 * b + 'x + a' + term(c, '', false) + ' > 0 が 成り立つような 定数 a の値の範囲を求めよ。',
+      sol: sol, solVar: 'a', shapes: ['between', 'outside', 'gt', 'lt'],
+      inside: function (A) { return A > 0 && z(b * b - A * (A + c)) < 0; },
+      hint: 'すべての x で > 0 ⇔ グラフが 下に凸(a > 0)で、x軸と 共有点をもたない(D < 0)',
+      explain: ['すべての x で成り立つ ⇔ a > 0 かつ D < 0', 'D/4 = ' + b * b + ' - ' + aac + ' < 0 より ' + facPair(r1, r2).replace(/x/g, 'a') + ' > 0、a < ' + r1 + ', ' + r2 + ' < a', 'a > 0 との 共通範囲は a > ' + r2],
+      mistakes: [{ sol: { kind: 'outside', a: N(r1), b: N(r2) }, tag: 'coef-pos', msg: 'a > 0(下に凸)の条件を 忘れていないかな。D < 0 の解との 共通範囲を とろう' },
+        { sol: { kind: 'between', a: N(r1), b: N(r2) }, tag: 'allreal-d', msg: 'D/4 < 0 を 整理すると (a' + term(-r1, '', false) + ')(a' + term(-r2, '', false) + ') > 0。外側の範囲だよ' },
+        { sol: { kind: 'gt', eq: true, a: N(r2) }, tag: 'ineq-eq', msg: 'D = 0 のときは 接点で 0 になるので、等号は つかないよ' }]
     };
   }
 };
@@ -965,6 +1054,24 @@ types['r-pick'] = {
     };
   }
 };
+types['qdev'] = {
+  name: '四分位偏差(データ 7〜8 個)', level: 1,
+  gen: function (R) {
+    const n = R.pick([7, 8]);
+    const data = pickUntil(function () { const d = []; for (let i = 0; i < n; i++) d.push(R.int(1, 20)); return d; },
+      function (d) { const f = five(d), w = f[3] - f[1]; return w > 0 && Math.abs(w - Math.round(w)) < 1e-9; },      // 四分位偏差が 整数か .5
+      n === 7 ? [12, 3, 8, 15, 6, 10, 18] : [9, 2, 15, 6, 18, 4, 11, 13]);
+    const s = sorted(data), f = five(data), ans = dec((f[3] - f[1]) / 2), fi = fiveIn(data);
+    const qd = n === 7 ? (s[5] - s[1]) / 2 : (s[5] + s[6] - s[1] - s[2]) / 4;      // 検算は 並べた位置から 別に 計算
+    return {
+      text: 'つぎの データの 四分位偏差を求めよ。', expr: data.join(', '), form: '□', answers: [ans], keys: ['.'], num: [qd],
+      hint: '四分位偏差 = (四分位範囲) ÷ 2 = (Q_3 - Q_1) ÷ 2',
+      explain: ['小さい順に ' + s.join(', '), 'Q_1 = ' + dec(f[1]) + '、Q_3 = ' + dec(f[3]), '四分位偏差 = (' + dec(f[3]) + ' - ' + dec(f[1]) + ') ÷ 2 = ' + ans],
+      mistakes: U.mistakes([ans], [m1(dec(f[3] - f[1]), 'qdev-half', 'それは 四分位範囲。2 で 割ろう'), m1(dec((f[4] - f[0]) / 2), 'qdev-range', '範囲ではなく、Q_3 - Q_1 を 使おう'),
+        n === 7 ? m1(dec((fi[3] - fi[1]) / 2), 'q-median-in', 'データが 奇数個のときは、中央値を のぞいた 下半分・上半分で Q_1・Q_3 を 求めるよ') : null])
+    };
+  }
+};
 /* ==================== 隠し①:解の配置の深淵(考査範囲外) ==================== */
 types['hx-coef'] = {
   name: '発展: x^2 の係数が文字の方程式', level: 5,
@@ -1331,10 +1438,10 @@ const enemies = {
   suzume: zako('ちゅうおうちスズメ', 'hato', ['rep-val', 'range-iqr'], { swap: { G: 'N', g: 'n', W: 'E' } }),
   // 解の公式の洞窟
   rootbat: zako('ルートコウモリ', 'bat', ['eq-tasuki', 'eq-formula', 'cnt-cross'], { level: 3, hp: 1, atk: 1 }),
-  tasuki: zako('たすきがけグモ', 'kumo', ['eq-even', 'm-range', 'm-double'], { level: 4, hp: 1.2, atk: 1 }),
-  sasori: zako('はんべつサソリ', 'kani', ['m-real', 'm-cross', 'cnt-vertex'], { level: 5, hp: 1.3, atk: 1, swap: { R: 'O', r: 'N' } }),
+  tasuki: zako('たすきがけグモ', 'kumo', ['eq-even', 'm-range', 'm-double', 'm-dneg'], { level: 4, hp: 1.2, atk: 1 }),
+  sasori: zako('はんべつサソリ', 'kani', ['m-real', 'm-cross', 'cnt-vertex', 'm-tangent'], { level: 5, hp: 1.3, atk: 1, swap: { R: 'O', r: 'N' } }),
   formula: { name: '解の公式竜フォーミュラ', sprite: 'b_dragon', boss: true, level: 6, hp: 6, atk: 1.2, line: 'われは 解の公式竜フォーミュラ。± の 両方を 見落とすな!', swap: { R: 'B', r: 'b', O: 'C' },
-    types: ['eq-tasuki', 'eq-formula', 'eq-even', 'm-range', 'm-double', 'm-real', 'cnt-cross', 'm-cross', 'cnt-vertex'] },
+    types: ['eq-tasuki', 'eq-formula', 'eq-even', 'm-range', 'm-double', 'm-real', 'cnt-cross', 'm-cross', 'cnt-vertex', 'm-dneg', 'm-tangent'] },
   // 度数の森
   kaikyu: zako('かいきゅうキノコ', 'kinoko', ['tbl-freq', 'two-class'], { level: 5, hp: 1, atk: 1 }),
   ruiseki: zako('るいせきツリー', 'ki', ['draw-hist', 'mean20', 'mode-table'], { level: 6, hp: 1.2, atk: 1 }),
@@ -1344,24 +1451,24 @@ const enemies = {
   // 不等式の塔
   futogo: zako('ふとうごうガーゴイル', 'gargoyle', ['ineq-int', 'ineq-root', 'ineq-neg'], { level: 8, hp: 1, atk: 1 }),
   jissu: zako('じっすうゴースト', 'ghost', ['ineq-letter', 'ineq-tasuki', 'ineq-sqcomp'], { level: 9, hp: 1.2, atk: 1 }),
-  miira: zako('かいなしミイラ', 'miira', ['ineq-complete', 'ineq-dneg', 'ineq-letter2', 'ineq-vertex'], { level: 10, hp: 1.3, atk: 1 }),
+  miira: zako('かいなしミイラ', 'miira', ['ineq-complete', 'ineq-dneg', 'ineq-letter2', 'ineq-vertex', 'm-allreal'], { level: 10, hp: 1.3, atk: 1 }),
   boda: { name: '境界の魔導師ボーダリオ', sprite: 'b_mage', boss: true, level: 11, hp: 6, atk: 1.2, line: '境界の魔導師ボーダリオ……等号 ひとつで 運命が 変わるのだ。',
-    types: ['ineq-int', 'ineq-root', 'ineq-neg', 'ineq-letter', 'ineq-tasuki', 'ineq-sqcomp', 'ineq-complete', 'ineq-dneg', 'ineq-letter2', 'ineq-vertex'] },
+    types: ['ineq-int', 'ineq-root', 'ineq-neg', 'ineq-letter', 'ineq-tasuki', 'ineq-sqcomp', 'ineq-complete', 'ineq-dneg', 'ineq-letter2', 'ineq-vertex', 'm-allreal'] },
   // 散らばりの迷宮
-  dwarf: zako('はこひげドワーフ', 'heishi', ['quartile', 'draw-box', 'q-position', 'box-read', 'outlier-bound'], { level: 10, hp: 1, atk: 1 }),
+  dwarf: zako('はこひげドワーフ', 'heishi', ['quartile', 'draw-box', 'q-position', 'box-read', 'outlier-bound', 'qdev'], { level: 10, hp: 1, atk: 1 }),
   blob: zako('ぶんさんブロブ', 'koro', ['var-sd', 'var-method', 'sd-compare', 'outlier-box', 'hist-box'], { level: 11, hp: 1.2, atk: 1, swap: { C: 'L', B: 'l' } }),
   soukan: zako('そうかんゴースト', 'rei', ['draw-scatter', 'corr-choose', 'corr-calc', 'corr-cause', 'r-pick'], { level: 12, hp: 1.3, atk: 1 }),
   sigma: { name: '偏差の番人シグマ', sprite: 'b_king', boss: true, level: 14, hp: 7, atk: 1.2, line: 'われは 偏差の番人シグマ。散らばりを 見誤る者は 通さぬ。', swap: { V: 'T', C: 'W' },
-    types: ['quartile', 'draw-box', 'outlier-box', 'box-read', 'hist-box', 'var-sd', 'var-method', 'corr-calc', 'r-pick'] },
+    types: ['quartile', 'draw-box', 'outlier-box', 'box-read', 'hist-box', 'var-sd', 'var-method', 'corr-calc', 'r-pick', 'qdev'] },
   // 魔王の城(各エリアの上位種)
   g_bat: zako('城の衛兵・ルートコウモリ改', 'bat', ['eq-formula', 'm-range', 'cnt-vertex', 'm-cross'], { level: 20, hp: 1.2, atk: 1, swap: { p: 'r', v: 'R' } }),
-  g_garg: zako('城の衛兵・ふとうごうガーゴイル改', 'gargoyle', ['ineq-root', 'ineq-tasuki', 'ineq-dneg', 'ineq-letter'], { level: 20, hp: 1.3, atk: 1, swap: { G: 'R', g: 'r', R: 'Y' } }),
+  g_garg: zako('城の衛兵・ふとうごうガーゴイル改', 'gargoyle', ['ineq-root', 'ineq-tasuki', 'ineq-dneg', 'ineq-letter', 'm-allreal', 'm-allreal-a'], { level: 20, hp: 1.3, atk: 1, swap: { G: 'R', g: 'r', R: 'Y' } }),
   g_kinoko: zako('城の衛兵・かいきゅうキノコ改', 'kinoko', ['mean-table', 'two-class', 'median-why', 'draw-hist'], { level: 21, hp: 1.3, atk: 1, swap: { R: 'V', r: 'v' } }),
   g_ghost: zako('城の衛兵・そうかんゴースト改', 'ghost', ['var-sd', 'corr-calc', 'outlier-box', 'hist-box', 'quartile'], { level: 21, hp: 1.4, atk: 1, swap: { W: 'p', C: 'V' } }),
   maou: { name: '関数統計魔王クアドラ', sprite: 'b_maou', boss: true, level: 23, hp: 8, atk: 1.2, line: 'われこそは 関数統計魔王クアドラ。放物線も データも、すべて わが手の中!',
     types: ['eq-formula', 'm-range', 'ineq-root', 'ineq-neg', 'mean-table', 'quartile', 'var-sd', 'corr-calc'],
     phase2: { name: '真・関数統計魔王クアドラ', line: 'クアドラの 真のすがた……ここからが 本当の 考査だ!', swap: { v: 'r', V: 'R', G: 'g', g: 'K', R: 'Y' },
-      types: ['eq-even', 'm-real', 'cnt-vertex', 'ineq-tasuki', 'ineq-dneg', 'ineq-letter2', 'draw-box', 'outlier-box', 'hist-box', 'var-method', 'r-pick'] } },
+      types: ['eq-even', 'm-real', 'cnt-vertex', 'ineq-tasuki', 'ineq-dneg', 'ineq-letter2', 'draw-box', 'outlier-box', 'hist-box', 'var-method', 'r-pick', 'm-allreal', 'm-allreal-a'] } },
   // 隠し①:解の配置の深淵
   houbutsu: zako('深淵の放物霊', 'rei', ['hx-coef', 'hx-kcount', 'hx-coef-sol', 'hx-chord'], { level: 25, hp: 1.2, atk: 1, swap: { p: 't', W: 'Y' } }),
   haichi: zako('深淵のかいはいちヘビ', 'hebi', ['hx-allreal', 'hx-separate', 'hx-placement', 'hx-system', 'hx-line'], { level: 26, hp: 1.3, atk: 1, swap: { l: 'v', L: 'p' } }),
