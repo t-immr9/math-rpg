@@ -235,7 +235,8 @@ function parseMarkup(src) {
   return seq(false);
 }
 function escH(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
-function escM(t) { return escH(t).replace(/-/g, '−'); }
+/* x̄(文字 + 上につける横棒 U+0304)は 太字の日本語フォントで 横棒が ずれるので、上線(.mbar)で かく。ȳ は 1文字(U+0233)の場合も ある */
+function escM(t) { return escH(t).replace(/-/g, '−').replace(/ȳ/g, 'ȳ').replace(/Ȳ/g, 'Ȳ').replace(/([A-Za-z])̄/g, '<span class="mbar">$1</span>'); }
 const ROOT_SVG = '<svg class="ms" viewBox="0 0 10 20" preserveAspectRatio="none"><path d="M0.5 12 L2.5 11 L5.5 19 L9.5 1 L10 1"/></svg>';
 function nodesHTML(nodes, ctx) {
   return nodes.map(function (n) {
@@ -1130,6 +1131,13 @@ function checkQuestion(q) {
     mathHTML(q.text); if (q.expr !== undefined) mathHTML(q.expr); mathHTML(q.hint); mathHTML(answerText(q));
     if (q.fig) figureSVG(q.fig);
     const af = answerFig(q); if (af) figureSVG(af);
+    if (q.exTable !== undefined) {                      // 解説の表(数だけの表。空欄は 使わない)
+      const t = q.exTable;
+      if (!t || !Array.isArray(t.rows) || !t.rows.length) return '解説の表(exTable)の rows がない';
+      const w = (t.head || t.rows[0]).length;
+      if (w < 1 || w > 10 || !t.rows.every(function (r) { return Array.isArray(r) && r.length === w && r.every(function (c) { return typeof c === 'string' || typeof c === 'number'; }); })) return '解説の表(exTable)の列の数が そろっていないか、文字・数 以外が ある(10列まで)';
+      tableHTML(t, 'answer');
+    }
     q.explain.forEach(function (l) { mathHTML(l); });
     q.mistakes.forEach(function (m) { mathHTML(m.msg); });
   } catch (e) { return e.message; }
@@ -2181,7 +2189,10 @@ M.start = function (courseId, mount, host) {
       const af = answerFig(q), isT = q.input === 'table';
       showMsg('<div class="ex"><div class="exa">' + (q.plot ? 'こたえ(正しい図)' : isT ? 'こたえ(正しい表)' : 'こたえ <span class="exf">' + mathHTML(answerText(q)) + '</span>') + '</div>' +
         (af ? '<div class="qfig">' + figureSVG(af) + '</div>' : '') + (isT ? '<div class="qtbl">' + tableHTML(q.table, 'answer') + '</div>' : '') +
+        (q.exTable ? '<div class="qtbl extbl">' + tableHTML(q.exTable, 'answer') + '</div>' : '') +            // 解説の表(はばが 広いときは 横に スクロール)
         q.explain.map(function (l) { return '<div class="exl">' + mathHTML(l) + '</div>'; }).join('') + '</div><span class="more">▼</span>');
+      const xt = msgEl.querySelector('.extbl');
+      if (xt && xt.scrollWidth > xt.clientWidth + 1) xt.insertAdjacentHTML('afterend', '<div class="qz">← 表は 横に スクロールして 全部 見られる →</div>');
       msgEl.classList.add('done');
       const at = Date.now(), go = function () { if (Date.now() - at < 500) return; modal = null; msgEl.classList.remove('done'); res(); };
       modal = { A: go, B: go };

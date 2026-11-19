@@ -1032,6 +1032,45 @@ types['corr-cause'] = {
   }
 };
 function ch3(right, wrongs) { return [{ text: right, ok: true }].concat(wrongs.map(function (w) { return { text: w[0], tag: w[1], msg: w[2] }; })); }
+/* 偏差が -4〜4 の整数で、和が 0 になる 5 個の並び(0 は 2 個まで)。相関係数の型(corr-data)で使う */
+const DEV5 = (function () {
+  const out = [];
+  (function rec(a, s) { if (a.length === 4) { if (s >= -4 && s <= 4) out.push(a.concat([-s])); return; } for (let d = -4; d <= 4; d++) rec(a.concat([d]), s + d); })([], 0);
+  return out.filter(function (v) { return v.filter(function (x) { return x === 0; }).length <= 2; }).map(function (v) { return { d: v, ss: sum(v.map(function (x) { return x * x; })) }; });
+})();
+const CORR_MEMO = {};
+types['corr-data'] = {
+  name: '5人のデータの表から 相関係数を求める', level: 3,
+  gen: function (R) {
+    const k = R.int(5, 9) * (R.chance(0.5) ? 1 : -1);      // 先に r × 10 を 決めてから 数値を さがす(r = ±0.5 に かたよらないように)
+    const dot = function (a, b) { return sum(a.map(function (x, i) { return x * b[i]; })); };
+    const pair = pickUntil(function () {
+      const xi = R.int(0, DEV5.length - 1), X = DEV5[xi], key = xi + ':' + k;
+      const c = CORR_MEMO[key] || (CORR_MEMO[key] = DEV5.filter(function (Y) { const p = X.ss * Y.ss; return isSq(p) && dot(X.d, Y.d) * 10 === k * Math.round(Math.sqrt(p)); }));   // √ が 外れて、r が ちょうど k/10(一度 調べた組は おぼえておく)
+      return c.length ? [X, R.pick(c)] : null;
+    }, function (v) { return !!v; }, [{ d: [2, -1, 0, 1, -2], ss: 10 }, { d: [2, 0, -1, 1, -2], ss: 10 }]);
+    const dx = pair[0].d, dy = pair[1].d, sxx = pair[0].ss, syy = pair[1].ss, sxy = dot(dx, dy), den = Math.round(Math.sqrt(sxx * syy));
+    const mx = R.int(1 - Math.min.apply(null, dx), 10 - Math.max.apply(null, dx)), my = R.int(1 - Math.min.apply(null, dy), 10 - Math.max.apply(null, dy));
+    const x = dx.map(function (d) { return mx + d; }), y = dy.map(function (d) { return my + d; }), r = sxy / den, ans = dec(r);
+    /* 検算: もとのデータから Math の関数で 別に 計算する */
+    const ax = sum(x) / 5, ay = sum(y) / 5, chk = sum(x.map(function (v, i) { return (v - ax) * (y[i] - ay); })) / Math.sqrt(sum(x.map(function (v) { return Math.pow(v - ax, 2); })) * sum(y.map(function (v) { return Math.pow(v - ay, 2); })));
+    const P = ['A', 'B', 'C', 'D', 'E'], sq2 = function (v) { return v.map(function (d) { return d * d; }); };
+    const add = sum(dx.map(function (d) { return d * d; })) + sum(dy.map(function (d) { return d * d; })), cand = [m1(dec(-r), 'r-sign', r < 0 ? '偏差の積の和は 負の数。r の 符号を 落とさないように しよう' : '偏差の積の和は 正の数。符号を 確かめよう')];
+    if (isTerm(sxy / add)) cand.push(m1(dec(sxy / add), 'r-sum', '分母は √{(x の偏差の2乗の和) × (y の偏差の2乗の和)}。たし算では ないよ'));
+    if (isSq(add) && isTerm(sxy / Math.sqrt(add))) cand.push(m1(dec(sxy / Math.sqrt(add)), 'r-sum', '√ の中は (x の偏差の2乗の和) × (y の偏差の2乗の和)。たし算では ないよ'));
+    if (isTerm(sxy / (sxx * syy))) cand.push(m1(dec(sxy / (sxx * syy)), 'r-nosqrt', '分母は 2乗の和の 積の √。√ を 付け忘れていないかな'));
+    cand.push(m1(N(sxy), 'r-div', '偏差の積の和を √{(x の偏差の2乗の和) × (y の偏差の2乗の和)} で 割ろう。r は -1 以上 1 以下'));
+    return {
+      text: '5人の 変量 x、y の データが 表のようになった。x と y の 相関係数 r を求めよ。', fig: tbl([''].concat(P), [['x'].concat(x), ['y'].concat(y)]),
+      form: 'r = □', answers: [ans], keys: ['.'], num: [chk],
+      hint: 'r = (偏差の積の和) ÷ √{(x の偏差の2乗の和) × (y の偏差の2乗の和)}',
+      exTable: { head: [''].concat(P, ['計']), rows: [['x'].concat(x, [sum(x)]), ['y'].concat(y, [sum(y)]), ['x - x̄'].concat(dx, [0]), ['y - ȳ'].concat(dy, [0]),
+        ['(x - x̄)^2'].concat(sq2(dx), [sxx]), ['(y - ȳ)^2'].concat(sq2(dy), [syy]), ['(x - x̄)(y - ȳ)'].concat(dx.map(function (d, i) { return d * dy[i]; }), [sxy])] },
+      explain: ['平均値 x̄ = ' + sum(x) + ' ÷ 5 = ' + mx + '、ȳ = ' + sum(y) + ' ÷ 5 = ' + my, 'r = ' + sxy + ' ÷ √{' + sxx + ' × ' + syy + '} = ' + sxy + ' ÷ ' + den, 'r = ' + ans],
+      mistakes: U.mistakes([ans], cand)
+    };
+  }
+};
 types['r-pick'] = {
   name: '散布図から r に近い値を選ぶ', level: 3,
   gen: function (R) {
@@ -1457,14 +1496,14 @@ const enemies = {
   // 散らばりの迷宮
   dwarf: zako('はこひげドワーフ', 'heishi', ['quartile', 'draw-box', 'q-position', 'box-read', 'outlier-bound', 'qdev'], { level: 10, hp: 1, atk: 1 }),
   blob: zako('ぶんさんブロブ', 'koro', ['var-sd', 'var-method', 'sd-compare', 'outlier-box', 'hist-box'], { level: 11, hp: 1.2, atk: 1, swap: { C: 'L', B: 'l' } }),
-  soukan: zako('そうかんゴースト', 'rei', ['draw-scatter', 'corr-choose', 'corr-calc', 'corr-cause', 'r-pick'], { level: 12, hp: 1.3, atk: 1 }),
+  soukan: zako('そうかんゴースト', 'rei', ['draw-scatter', 'corr-choose', 'corr-calc', 'corr-cause', 'r-pick', 'corr-data'], { level: 12, hp: 1.3, atk: 1 }),
   sigma: { name: '偏差の番人シグマ', sprite: 'b_king', boss: true, level: 14, hp: 7, atk: 1.2, line: 'われは 偏差の番人シグマ。散らばりを 見誤る者は 通さぬ。', swap: { V: 'T', C: 'W' },
-    types: ['quartile', 'draw-box', 'outlier-box', 'box-read', 'hist-box', 'var-sd', 'var-method', 'corr-calc', 'r-pick', 'qdev'] },
+    types: ['quartile', 'draw-box', 'outlier-box', 'box-read', 'hist-box', 'var-sd', 'var-method', 'corr-calc', 'r-pick', 'qdev', 'corr-data'] },
   // 魔王の城(各エリアの上位種)
   g_bat: zako('城の衛兵・ルートコウモリ改', 'bat', ['eq-formula', 'm-range', 'cnt-vertex', 'm-cross'], { level: 20, hp: 1.2, atk: 1, swap: { p: 'r', v: 'R' } }),
   g_garg: zako('城の衛兵・ふとうごうガーゴイル改', 'gargoyle', ['ineq-root', 'ineq-tasuki', 'ineq-dneg', 'ineq-letter', 'm-allreal', 'm-allreal-a'], { level: 20, hp: 1.3, atk: 1, swap: { G: 'R', g: 'r', R: 'Y' } }),
   g_kinoko: zako('城の衛兵・かいきゅうキノコ改', 'kinoko', ['mean-table', 'two-class', 'median-why', 'draw-hist'], { level: 21, hp: 1.3, atk: 1, swap: { R: 'V', r: 'v' } }),
-  g_ghost: zako('城の衛兵・そうかんゴースト改', 'ghost', ['var-sd', 'corr-calc', 'outlier-box', 'hist-box', 'quartile'], { level: 21, hp: 1.4, atk: 1, swap: { W: 'p', C: 'V' } }),
+  g_ghost: zako('城の衛兵・そうかんゴースト改', 'ghost', ['var-sd', 'corr-calc', 'outlier-box', 'hist-box', 'quartile', 'corr-data'], { level: 21, hp: 1.4, atk: 1, swap: { W: 'p', C: 'V' } }),
   maou: { name: '関数統計魔王クアドラ', sprite: 'b_maou', boss: true, level: 23, hp: 8, atk: 1.2, line: 'われこそは 関数統計魔王クアドラ。放物線も データも、すべて わが手の中!',
     types: ['eq-formula', 'm-range', 'ineq-root', 'ineq-neg', 'mean-table', 'quartile', 'var-sd', 'corr-calc'],
     phase2: { name: '真・関数統計魔王クアドラ', line: 'クアドラの 真のすがた……ここからが 本当の 考査だ!', swap: { v: 'r', V: 'R', G: 'g', g: 'K', R: 'Y' },
