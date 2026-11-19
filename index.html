@@ -98,6 +98,20 @@ sup:has(.mf){vertical-align:.9em}
 .qfig svg{width:100%;max-width:300px;height:auto;max-height:30vh}
 .qz{font-size:11px;color:#8a8aa8;line-height:1.5}
 @media (max-height:780px){#app.roomy #stage{display:none}.qfig svg{max-height:27vh}}
+/* 入力画面: 答えの部分(.qans)は 枠の下に固定。問題文と図(.qtop)は 残りの高さに 収め、はみ出すと ここだけ スクロール(図の大きさは engine.js の fitAsk) */
+#msg.asking{overflow:hidden;display:flex;flex-direction:column;padding-bottom:4px}
+#msg.asking .q{flex:1;min-height:0;display:flex;flex-direction:column}
+#msg.asking .qtop{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#msg.asking .qans{flex:none;border-top:1px dashed #44446a;margin-top:2px}
+#msg.asking .qans.scroll{overflow-y:auto;overscroll-behavior:contain}
+#msg.asking .qn:empty{min-height:0}
+/* 答えている間は 敵の絵を 小さくする(図・選択肢のある問題は もっと小さく。背の低い画面では たたむ) */
+#app.asking #cv{width:auto;height:clamp(84px,21vh,200px);margin:0 auto}
+#app.asking.roomy #cv{height:clamp(84px,15vh,170px)}
+/* 不等式: 形を えらんだあとの「形を かえる」 */
+.qrow{display:flex;align-items:center;gap:6px}.qrow .qs{flex:1;margin:0}
+.shape.reshape{flex:none;min-height:30px;font-size:12px;padding:2px 8px;border-style:dashed}
+.k[data-k="hint"]{white-space:nowrap}
 #zoom{display:none;position:absolute;inset:0;z-index:25;background:#05050c;align-items:center;justify-content:center;padding:6px;cursor:zoom-out}
 #zoom.on{display:flex}
 #zoom .zin{width:100%;text-align:center;line-height:0}
@@ -176,6 +190,11 @@ sup:has(.mf){vertical-align:.9em}
 .cfoot{text-align:right;font-size:11px;color:#7c7c7c;margin-top:10px}
 .courses{padding:10vh 16px}.courses a{display:block;border:3px solid #fcfcfc;border-radius:8px;padding:14px;margin:12px 0;color:#fcfcfc;text-decoration:none;background:#000}
 .courses small{display:block;color:#bcbcbc;margin-top:4px;font-weight:normal}
+/* 背の低い画面では キー・表・形のボタンを 少し 低くする(上の 決まりを 上書きするので 最後に 置く) */
+@media (max-height:860px){.tbl{font-size:15px;line-height:1.35}.tbl th,.tbl td{padding:2px 6px}.tbl .blank{min-height:1.85em;line-height:1.75}}
+@media (max-height:700px){#keys{gap:4px;padding:3px 6px 6px}#keys .k{height:38px}#keys .k.tall{height:42px}.shape{min-height:32px}}
+@media (max-height:600px){#keys .k{height:35px}#keys .k.tall{height:38px}#panel{padding:4px;gap:4px}#app.asking #stage{display:none}
+  .tbl{font-size:14px;margin:2px auto}.tbl th{font-size:12px}.tbl th,.tbl td{padding:1px 4px}.tbl .blank{min-height:1.55em;line-height:1.5}.qans .qs:has(+ .qtbl){display:none}}
 </style>
 </head>
 <body>

@@ -1160,5 +1160,13 @@ const P = require('../pet.js');
   });
 })();
 
+/* 入力画面の 置き場所(画面の大きさごと)。Chrome / Edge を 画面なしで 動かす 別の検査(tests/layout.js)。
+   Chrome が ない パソコンでは とばす。MATHRPG_LAYOUT=0 で とばせる(急ぐとき)。 */
+if (process.env.MATHRPG_LAYOUT !== '0') {
+  const lr = spawnSync(process.execPath, [path.join(__dirname, 'layout.js')], { stdio: 'inherit', timeout: 900000 });
+  checks++;
+  if (lr.status !== 0) { fails++; console.log('  ✗ 入力画面の 置き場所の検査に 失敗(上の ✗ を 見る。node tests/layout.js で くりかえせる)'); }
+} else console.log('\n■ 入力画面の 置き場所: MATHRPG_LAYOUT=0 なので とばした');
+
 console.log('\n' + (fails ? '✗ ' + fails + ' 件の 失敗(検査 ' + checks + ' 件)' : '✓ すべて合格(検査 ' + checks + ' 件)'));
 process.exit(fails ? 1 : 0);

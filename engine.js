@@ -1486,7 +1486,7 @@ M.start = function (courseId, mount, host) {
     const el = $('banner'); el.innerHTML = '<div class="b1">' + escH(a) + '</div><div class="b2">' + escH(b) + '</div>';
     el.className = 'on'; sfx(sound); await wait(1500); el.className = '';
   }
-  function showMsg(html) { msgEl.classList.remove('done'); msgEl.innerHTML = html; msgEl.scrollTop = 0; }
+  function showMsg(html) { msgEl.classList.remove('done', 'asking'); msgEl.innerHTML = html; msgEl.scrollTop = 0; }
   /* メッセージを1文字ずつ表示し、A か タップで次へ */
   function say(text) {
     return new Promise(function (res) {
@@ -1559,7 +1559,38 @@ M.start = function (courseId, mount, host) {
   /* 図をタップすると 画面いっぱいに 大きく表示。もう一度タップで もどる */
   const zoomEl = $('zoom');
   function zoomClose() { zoomEl.className = ''; zoomEl.innerHTML = ''; }
-  function zoomFig(fg) { const sv = fg.querySelector('svg'); if (!sv) return; zoomEl.innerHTML = '<div class="zin">' + sv.outerHTML + '<div class="zt">タップで もどる</div></div>'; zoomEl.className = 'on'; sfx('cursor'); }
+  function zoomFig(fg) {
+    const sv = fg.querySelector('svg'); if (!sv) return;
+    const cp = sv.cloneNode(true); cp.removeAttribute('style');           // 入力画面で 縮めた大きさ(fitAsk)は 持ちこまない
+    zoomEl.innerHTML = '<div class="zin">' + cp.outerHTML + '<div class="zt">タップで もどる</div></div>'; zoomEl.className = 'on'; sfx('cursor');
+  }
+  /* 入力画面の 大きさ合わせ。答えの部分(.qans)と キーは いつも 画面の中に 出す。
+     問題文・図(.qtop)は 残りの高さに 収め、図は 高さに 合わせて 縮める。それでも はみ出す分は 問題文の部分だけ スクロールする。
+     答えの部分が 大きすぎるとき(図の選択肢・かく図)は、答えの中の図を 縮める。最後の手段として 答えの部分も スクロールにする(.scroll)。 */
+  const FIT_TOP = 72, FIT_FIG = 84;      // 問題文の部分に 少なくとも 残す高さ / 図を 縮めるときの 最小の高さ(px)
+  function fitAsk() {
+    if (!msgEl.classList.contains('asking')) return;
+    const qt = msgEl.querySelector('.qtop'), qa = msgEl.querySelector('.qans'); if (!qt || !qa) return;
+    const figs = Array.from(qt.querySelectorAll('.qfig svg')), afigs = Array.from(qa.querySelectorAll('.figopt svg, .draw svg'));
+    figs.concat(afigs).forEach(function (s) { s.style.maxWidth = ''; });
+    qa.style.maxHeight = ''; qa.classList.remove('scroll');
+    const cs = getComputedStyle(msgEl), H = msgEl.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (!(H > 0)) return;
+    const room = H - Math.min(qt.scrollHeight, FIT_TOP);
+    if (qa.offsetHeight > room && afigs.length) {
+      const w0 = afigs.map(function (s) { return s.getBoundingClientRect().width; });
+      for (let k = 0.9; qa.offsetHeight > room && k > 0.25; k -= 0.08) afigs.forEach(function (s, i) { s.style.maxWidth = Math.floor(w0[i] * k) + 'px'; });
+    }
+    if (qa.offsetHeight > room) { qa.style.maxHeight = Math.max(60, Math.floor(room)) + 'px'; qa.classList.add('scroll'); }
+    const over = qt.scrollHeight - qt.clientHeight;
+    if (over > 0) figs.forEach(function (s) {
+      const r = s.getBoundingClientRect(); if (!(r.height > 0)) return;
+      const vb = s.viewBox && s.viewBox.baseVal, asp = vb && vb.width && vb.height ? vb.width / vb.height : r.width / r.height;
+      const h = Math.max(FIT_FIG, Math.min(r.height, r.width / asp) - over / figs.length);
+      s.style.maxWidth = Math.floor(h * asp) + 'px';
+    });
+  }
+  window.addEventListener('resize', fitAsk);
   zoomEl.addEventListener('click', zoomClose);
   $('panel').addEventListener('click', function (e) { const fg = e.target.closest('.qfig'); if (fg) { zoomFig(fg); return; } if (e.target.closest('#choices') || e.target.closest('.blank')) return; if (modal && modal.A && !modal.noTap) press('A'); });
   const DIRKEY = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -1616,7 +1647,7 @@ M.start = function (courseId, mount, host) {
   /* 思わぬエラーのあと、操作できる状態(マップ)へ もどす。toTown なら 町へ(ゴールドなどは減らさない)。 */
   function recover(toTown) {
     try {
-      modal = null; route = null; bt = null; zoomClose(); mount.classList.remove('roomy');
+      modal = null; route = null; bt = null; zoomClose(); mount.classList.remove('roomy', 'asking'); msgEl.classList.remove('asking');
       chEl.innerHTML = ''; chEl.onclick = null; msgEl.onclick = null; keysEl.className = ''; keysEl.onpointerdown = null; padEl.style.display = '';
       $('cutin').className = ''; $('banner').className = ''; $('fx').className = '';
       if (!S) return;
@@ -1918,9 +1949,10 @@ M.start = function (courseId, mount, host) {
     const pct = Math.max(0, Math.round(bt.hp / bt.max * 100));
     $('ename').innerHTML = '<span>' + escH(bt.name) + '</span>' + (bt.E.boss || bt.max > rules.atk(bt.E.level) ? '<i class="bar"><b style="width:' + pct + '%"></b></i>' : '');
   }
+  /* 問題の表示。上 = 問題文・図・式・ヒント(.qtop)、下 = 答えの部分(.qans)。入力画面では .qans を 下に固定する(fitAsk) */
   function qHTML(q, body) {
-    return '<div class="q"><div class="qt">' + mathHTML(q.text) + '</div>' + (q.fig ? '<div class="qfig">' + figureSVG(q.fig) + '<div class="qz">🔍 図をタップで 大きく表示</div></div>' : '') + (q.expr ? '<div class="qe">' + mathHTML(q.expr) + '</div>' : '') +
-      (body || '') + (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '<div class="qn"></div></div>';
+    return '<div class="q"><div class="qtop"><div class="qt">' + mathHTML(q.text) + '</div>' + (q.fig ? '<div class="qfig">' + figureSVG(q.fig) + '<div class="qz">🔍 図をタップで 大きく表示</div></div>' : '') + (q.expr ? '<div class="qe">' + mathHTML(q.expr) + '</div>' : '') +
+      (q.hintShown ? '<div class="qh">💡 ' + mathHTML(q.hint) + '</div>' : '') + '</div><div class="qans">' + (body || '') + '<div class="qn"></div></div></div>';
   }
   const KEYLABEL = { '-': '−', '⌫': '⌫', '分数': '<span class="mf"><span class="mn">□</span><span class="md">□</span></span>', '+': '＋', '<': '＜', '>': '＞', '≦': '＜⇄≦', '.': '.', '±': '±', hint: '💡ヒント', back: 'もどる', undo: '1つ もどす' };
   function partHTML(s) {
@@ -1936,7 +1968,7 @@ M.start = function (courseId, mount, host) {
     if (autoAnswer) return Promise.resolve(autoAnswer(q));
     return new Promise(function (res) {
       const kind = q.input || 'form', vn = q.solVar || 'x', shapes = q.shapes || SHAPE_ORDER;
-      let cells = [], act = 0, note = '', picked = [], shape = null, eq = false;
+      let cells = [], act = 0, note = '', picked = [], shape = null, eq = false, shapesOpen = false;
       function setCells(n) { cells = []; for (let i = 0; i < n; i++) cells.push({ num: '', den: null, part: 'num' }); act = 0; }
       function fillCells(raws) { raws.forEach(function (rw, i) { if (!cells[i]) return; const pf = /^\((.+)\)\/(.+)$/.exec(String(rw)), p = pf ? [pf[1], pf[2]] : String(rw).split('/'); cells[i].num = p[0]; cells[i].den = p.length > 1 ? p[1] : null; cells[i].part = 'num'; }); }
       if (kind === 'form') { setCells(countBlanks(q.form)); if (prefill) fillCells(prefill); }
@@ -1945,6 +1977,7 @@ M.start = function (courseId, mount, host) {
       const PL = q.plot, isDraw = kind === 'boxplot' || kind === 'hist' || kind === 'scatter';
       let dv = kind === 'boxplot' ? [null, null, null, null, null] : kind === 'hist' ? PL.freqs.map(function () { return 0; }) : [], dact = 0;
       mount.classList.toggle('roomy', !!q.fig || kind !== 'form');      // 図・選択肢のある問題は、小さい画面では 敵の絵をたたんで 問題欄を広くする(CSS)
+      mount.classList.add('asking');                                     // 答えている間は 敵の絵を 小さくする(CSS)
       function raw(c) { return c.den !== null ? (hasOp(c.num) ? '(' + c.num + ')' : c.num) + '/' + c.den : c.num; }      // 分子が 和・差のときは かっこで囲む
       function body() {
         if (kind === 'choice') {
@@ -1960,9 +1993,12 @@ M.start = function (courseId, mount, host) {
           }).join('') + '</div>';
         }
         if (kind === 'ineq') {
-          return '<div class="qs">答えの形を えらんで、空欄を うめる(＜ と ≦ は「＜⇄≦」キーで 切りかえ)</div><div class="shapes">' + shapes.map(function (k) {
+          /* 形を えらぶまでは 形の一覧。えらんだあとは 一覧を たたんで(答えの部分を 小さくして 画面に 収める)「形を かえる」で また 開く */
+          if (shape && !shapesOpen) return '<div class="qrow"><span class="qs">空欄を うめる(＜ と ≦ は「＜⇄≦」キーで 切りかえ)</span><button class="shape reshape" data-s="open">形を かえる</button></div>' +
+            '<div class="qf">' + mathHTML(shapeMarkup(shape, eq, vn, '□', '□'), true) + '</div>';
+          return '<div class="qs">答えの形を えらぶ(そのあと 空欄を うめる)</div><div class="shapes">' + shapes.map(function (k) {
             return '<button class="shape' + (k === shape ? ' sel' : '') + '" data-s="' + k + '">' + mathHTML(shapeMarkup(k, false, vn, '□', '□')) + '</button>';
-          }).join('') + '</div>' + (shape ? '<div class="qf">' + mathHTML(shapeMarkup(shape, eq, vn, '□', '□'), true) + '</div>' : '');
+          }).join('') + '</div>';
         }
         if (kind === 'table') return '<div class="qs">表の空欄を タップして、数を入れる</div><div class="qf qtbl">' + tableHTML(q.table, 'input') + '</div>';
         if (kind === 'boxplot') {
@@ -2001,9 +2037,8 @@ M.start = function (courseId, mount, host) {
         } else if (k === 'clrall') dv = [];
       }
       function render() {
-        const st = msgEl.scrollTop;
-        showMsg(qHTML(q, body()));
-        msgEl.scrollTop = st;                               // 選択肢をタップしても 表示位置が 上へ もどらないように
+        const t0 = msgEl.querySelector('.qtop'), a0 = msgEl.querySelector('.qans'), st = t0 ? t0.scrollTop : 0, sa = a0 ? a0.scrollTop : 0;
+        showMsg(qHTML(q, body())); msgEl.classList.add('asking');
         msgEl.querySelector('.qn').textContent = note;
         Array.from(msgEl.querySelectorAll('.qf .blank')).forEach(function (el, i) {      // 空欄は「答えの形」の中だけ
           const c = cells[i], on = i === act;
@@ -2015,6 +2050,8 @@ M.start = function (courseId, mount, host) {
               '</span><span class="md bp' + (on && c.part === 'den' ? ' cur' : '') + '" data-p="den">' + partHTML(c.den) + '</span></span>';
           } else el.innerHTML = partHTML(c.num);
         });
+        fitAsk();
+        msgEl.querySelector('.qtop').scrollTop = st; msgEl.querySelector('.qans').scrollTop = sa;      // 選択肢をタップしても 表示位置が 上へ もどらないように
       }
       function pick(i) {
         if (kind === 'choice') {
@@ -2027,7 +2064,14 @@ M.start = function (courseId, mount, host) {
         } else return;
         note = ''; sfx('cursor'); render();
       }
-      function setShape(k) { if (kind !== 'ineq' || shapes.indexOf(k) < 0) return; shape = k; setCells(SHAPES[k]); note = ''; sfx('cursor'); render(); }
+      function setShape(k) {
+        if (kind !== 'ineq') return;
+        if (k === 'open') { shapesOpen = true; sfx('cursor'); return render(); }
+        if (shapes.indexOf(k) < 0) return;
+        shapesOpen = false;
+        if (k === shape) { sfx('cursor'); return render(); }      // 同じ形を えらび直したときは 入れた数を 消さない
+        shape = k; setCells(SHAPES[k]); note = ''; sfx('cursor'); render();
+      }
       msgEl.onclick = function (e) {
         const o = e.target.closest('.opt'), sh = e.target.closest('.shape'), bl = e.target.closest('.blank'), bf = e.target.closest('.bf'), dr = e.target.closest('.draw');
         if (bf) { dact = parseInt(bf.getAttribute('data-bf'), 10); note = ''; sfx('cursor'); return render(); }
@@ -2039,7 +2083,7 @@ M.start = function (courseId, mount, host) {
         const bp = e.target.closest('.bp'); if (bp && cells[act] && cells[act].den !== null) cells[act].part = bp.getAttribute('data-p');
         note = ''; render();
       };
-      function finish(v) { mount.classList.remove('roomy'); msgEl.onclick = null; keysEl.onpointerdown = null; keysEl.className = ''; padEl.style.display = ''; modal = null; res(v); }
+      function finish(v) { mount.classList.remove('roomy', 'asking'); msgEl.classList.remove('asking'); msgEl.onclick = null; keysEl.onpointerdown = null; keysEl.className = ''; padEl.style.display = ''; modal = null; res(v); }
       function submit() {
         if (kind === 'choice') { if (!picked.length) { note = 'えらんでから 決定しよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
         if (kind === 'order') { if (picked.length < q.order.length) { note = 'すべてを 順に タップしよう'; return render(); } return finish({ judge: judgeAny(q, picked) }); }
@@ -2062,6 +2106,7 @@ M.start = function (courseId, mount, host) {
       }
       function key(k) {
         note = '';
+        if (shapesOpen && k !== 'hint' && k !== 'back') shapesOpen = false;      // 形の一覧を 開いたまま 打ちはじめたら、たたんで 空欄を 見せる
         if (k === 'back') return finish(null);
         if (k === 'ok') return submit();
         if (k === 'hint') {
@@ -2404,6 +2449,36 @@ M.start = function (courseId, mount, host) {
       if (params.get('figchoice') === '1' && q.plot) q = asFigChoice(q, makeRng(7)) || q;
       q.hintShown = true;
       if (a[0] === 'ask') { askAnswer(q, bt, q.answers); if (q.input !== 'form' && params.get('fill') !== '0') modal.dev.fill(); if (params.get('zoom') === '1' && msgEl.querySelector('.qfig')) msgEl.querySelector('.qfig').click(); } else showExplain(q);
+    } else if (a[0] === 'fit') {
+      /* 入力画面の 置き場所の検査: 全部の型(図・選ぶ・並べ替え・不等式・かく図・表・空欄)を 出して(ヒントも 表示)、答えの部分と キーが 画面の中に あるかを 測る。
+         結果は 画面と window.__fit に 出す(tests/layout.js が 読む)。&debug=fit:型ID で 1つの型だけ、&n= で 種の数 */
+      const res = [], ids = a[1] ? [a[1]] : Object.keys(course.types), seeds = parseInt(params.get('n') || '3', 10);
+      busy = true;
+      for (const tid of ids) {
+        const eid = Object.keys(course.enemies).find(function (id) { return course.enemies[id].types.concat(course.enemies[id].phase2 ? course.enemies[id].phase2.types : []).some(function (r) { return typeId(r) === tid; }); });
+        const E = course.enemies[eid] || course.enemies[Object.keys(course.enemies)[0]];
+        for (let sd = 1; sd <= seeds; sd++) {
+          const list = [];
+          try {
+            const q = buildQuestion(course, tid, makeRng(sd * 131 + 7)); list.push(q);
+            if (q.plot) { const q2 = asFigChoice(buildQuestion(course, tid, makeRng(sd * 131 + 7)), makeRng(sd)); if (q2) { q2.figChoice = true; list.push(q2); } }
+          } catch (e) { res.push({ type: tid, seed: sd, input: '?', bad: ['問題が 作れない: ' + e.message], m: {} }); continue; }
+          for (const q of list) {
+            bt ={ E: E, name: E.name, hp: 10, max: 10, hints: 1, turn: 1, phase: 1, spr: enemyCanvas(E), blink: 0, bg: THEMES.cave.bg };
+            mode = 'battle'; setStage('battle'); enameUpdate();
+            q.hintShown = true;
+            const pr = askAnswer(q, bt, q.answers); if (q.input !== 'form') modal.dev.fill();
+            await wait(0);
+            const r = M.layoutCheck(document);
+            res.push({ type: tid, seed: sd, input: (q.input || 'form') + (q.figChoice ? '(図の4択)' : '') + (q.fig ? '+図' : ''), bad: r.bad, m: r.m });
+            modal.key({ key: 'Escape' }); await pr;
+          }
+        }
+      }
+      const ng = res.filter(function (r) { return r.bad.length; });
+      window.__fit = { done: true, w: innerWidth, h: innerHeight, res: res };
+      ov('<div style="font-size:11px;line-height:1.5;font-weight:normal;word-break:break-all">画面 ' + innerWidth + '×' + innerHeight + ' / 調べた問題 ' + res.length + ' / 問題あり ' + ng.length + '<br>' +
+        res.map(function (r) { return escH(r.type + '#' + r.seed + ' ' + r.input + ' 問題文' + r.m.top + 'px 答え' + r.m.ans + 'px 図' + r.m.fig + 'px' + (r.m.scroll ? ' (問題文スクロール)' : '') + (r.bad.length ? ' ✗ ' + r.bad.join(' / ') : ' ✓')); }).join('<br>') + '</div>');
     } else if (a[0] === 'dun') {
       S.dun = { id: a[1], floor: parseInt(a[2] || '0', 10), seed: 12345, opened: {}, ret: course.start, x: 0, y: 0 };
       cur = dungeonMap(); setPos(cur.floor.start.x, cur.floor.start.y);
@@ -2548,6 +2623,30 @@ M.start = function (courseId, mount, host) {
   }
   requestAnimationFrame(frame);
   (DEV ? debugMain() : main()).catch(function (e) { console.error(e); });
+};
+
+/* 入力画面の 置き場所の検査(開発用 &debug=fit と tests/layout.js が 使う。RPG と 育成ゲームの どちらの画面でも 測れる)。
+   答えの部分(.qans)と キーが 画面の中に 入りきっているか、問題文の部分が 残っているかを 調べる。bad が 空なら 合格 */
+M.layoutCheck = function (doc) {
+  doc = doc || document;
+  const win = doc.defaultView, vh = win.innerHeight, vw = win.innerWidth, bad = [], E = 1;
+  const msg = doc.getElementById('msg'), keys = doc.getElementById('keys'), qt = msg && msg.querySelector('.qtop'), qa = msg && msg.querySelector('.qans');
+  if (!msg || !keys || !qt || !qa) return { bad: ['入力画面が ない'], m: {} };
+  const R = function (el) { return el.getBoundingClientRect(); };
+  const mr = R(msg), ar = R(qa), kr = R(keys), tr = R(qt), px = function (v) { return Math.round(v); };
+  if (!keys.classList.contains('on') || kr.height <= 0) bad.push('キーが 出ていない');
+  else if (kr.top < -E || kr.bottom > vh + E) bad.push('キーが 画面の外(' + px(kr.top) + '〜' + px(kr.bottom) + 'px / 画面の高さ ' + vh + ')');
+  if (ar.top < mr.top - E || ar.bottom > mr.bottom + E || ar.bottom > vh + E) bad.push('答えの部分が 枠の外(' + px(ar.top) + '〜' + px(ar.bottom) + 'px)');
+  if (qa.classList.contains('scroll') || qa.scrollHeight > qa.clientHeight + 2) bad.push('答えの部分が 入りきらない(高さ ' + qa.scrollHeight + 'px に 対して ' + qa.clientHeight + 'px)');
+  if (kr.height > 0 && ar.bottom > kr.top + E) bad.push('答えの部分と キーが 重なる');
+  ['.qf', '.opts', '.shapes', '.seq', '.draw', '.bfields', '.qtbl'].forEach(function (sel) {
+    Array.from(qa.querySelectorAll(sel)).forEach(function (el) { const r = R(el); if (r.top < ar.top - E || r.bottom > ar.bottom + E) bad.push(sel + ' が 見えない'); });
+  });
+  if (tr.height < 40) bad.push('問題文の部分が せまい(' + px(tr.height) + 'px)');
+  if (msg.scrollHeight > msg.clientHeight + 2) bad.push('枠ぜんたいが スクロールしている');
+  if (doc.documentElement.scrollWidth > vw + E) bad.push('横に はみ出す');
+  const fig = qt.querySelector('.qfig svg');
+  return { bad: bad, m: { top: px(tr.height), ans: px(ar.height), fig: fig ? px(R(fig).height) : 0, scroll: qt.scrollHeight > qt.clientHeight + 1 } };
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = M;

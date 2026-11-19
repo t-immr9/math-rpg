@@ -1170,6 +1170,25 @@ P.start = function (courseId, app) {
       const q = M.buildQuestion(course, a[1] || Object.keys(course.types)[0], U.makeRng(parseInt(a[2] || '1', 10)));
       if (params.get('wrong') === '1') { qhead('meal', 'fine', 'おしい! だいじょうぶ、何も へらないよ。' + (q.mistakes[0] ? '\n💡 ' + q.mistakes[0].msg : '')); api.explain(q); }
       else { S.today.fed = 2; qhead('meal', 'hungry', 'あと 3問で ごはん 完了!'); api.ask(q, { hints: 1 }, q.answers); if (q.input !== 'form' && params.get('fill') !== '0') api.dev().fill(); }
+    } else if (a[0] === 'fit') {
+      /* 入力画面の 置き場所の検査(RPG の &debug=fit と 同じ。tests/layout.js が window.__fit を 読む) */
+      quizOn = true; app.classList.add('quiz'); S.today.fed = 2; qhead('meal', 'hungry', 'あと 3問で ごはん 完了!');
+      const res = [], seeds = parseInt(params.get('n') || '3', 10), seen = {};
+      const ids = a[1] ? [a[1]] : [];
+      if (!a[1]) { units.forEach(function (u) { ['basic', 'standard', 'advanced'].forEach(function (t) { u[t].forEach(function (r) { seen[tid(r)] = 1; }); }); }); legendPool(course).forEach(function (r) { seen[tid(r)] = 1; }); Object.keys(seen).forEach(function (t) { ids.push(t); }); }
+      for (const t of ids) for (let sd = 1; sd <= seeds; sd++) {
+        let q; try { q = M.buildQuestion(course, t, U.makeRng(sd * 131 + 7)); } catch (e) { res.push({ type: t, seed: sd, input: '?', bad: ['問題が 作れない: ' + e.message], m: {} }); continue; }
+        q.hintShown = true;
+        const pr = api.ask(q, { hints: 1 }, q.answers); if (q.input !== 'form') api.dev().fill();
+        await wait(0);
+        const r = M.layoutCheck(document);
+        res.push({ type: t, seed: sd, input: (q.input || 'form') + (q.fig ? '+図' : ''), bad: r.bad, m: r.m });
+        api.key('Escape'); await pr;
+      }
+      window.__fit = { done: true, w: innerWidth, h: innerHeight, res: res };
+      const ng = res.filter(function (r) { return r.bad.length; });
+      sheet('入力画面の 置き場所', '<div style="font-size:11px;line-height:1.5;word-break:break-all">画面 ' + innerWidth + '×' + innerHeight + ' / 調べた問題 ' + res.length + ' / 問題あり ' + ng.length + '<br>' +
+        res.map(function (r) { return esc(r.type + '#' + r.seed + ' ' + r.input + ' 問題文' + r.m.top + 'px 答え' + r.m.ans + 'px' + (r.bad.length ? ' ✗ ' + r.bad.join(' / ') : ' ✓')); }).join('<br>') + '</div>');
     } else if (a[0] === 'evo') { const p = pet(); showEvents({ stageFrom: stageOf(p) - 1, stageTo: stageOf(p), legend: p.legend, rewards: [], titles: [] }); }
     else if (a[0] === 'reward') showEvents({ stageFrom: 1, stageTo: 1, rewards: [STREAK_REWARDS[1]], titles: [] });
     else if (a[0] === 'create') { S.pets = []; createScreen('new'); }

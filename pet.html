@@ -211,6 +211,16 @@ sup:has(.mf){vertical-align:.9em}
 .qfig{text-align:center;line-height:0;margin:2px 0;cursor:zoom-in}
 .qfig svg{width:100%;max-width:300px;height:auto;max-height:28vh}
 .qz{font-size:11px;color:#a8c4ba;line-height:1.5}
+/* 入力画面: 答えの部分(.qans)は 黒板の下に固定。問題文と図(.qtop)は 残りの高さに 収め、はみ出すと ここだけ スクロール(index.html と そろえる) */
+#msg.asking{overflow:hidden;display:flex;flex-direction:column;padding-bottom:4px}
+#msg.asking .q{flex:1;min-height:0;display:flex;flex-direction:column}
+#msg.asking .qtop{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+#msg.asking .qans{flex:none;border-top:1px dashed #6f9488;margin-top:2px}
+#msg.asking .qans.scroll{overflow-y:auto;overscroll-behavior:contain}
+#msg.asking .qn:empty{min-height:0}
+.qrow{display:flex;align-items:center;gap:6px}.qrow .qs{flex:1;margin:0}
+/* 背の低い画面で 図・選択肢のある問題を 解く間は、上の キャラクターの欄を 小さくする(答えの部分を 画面に 収めるため) */
+@media (max-height:680px){#pquiz:has(#quiz.roomy) #pqhead{padding:3px 8px}#pquiz:has(#quiz.roomy) #pqpet{width:40px;height:40px}#pquiz:has(#quiz.roomy) #pqsay{display:none}}
 #zoom{display:none;position:absolute;inset:0;z-index:25;background:#16302a;align-items:center;justify-content:center;padding:6px;cursor:zoom-out}
 #zoom.on{display:flex}
 #zoom .zin{width:100%;text-align:center;line-height:0}
@@ -254,6 +264,13 @@ sup:has(.mf){vertical-align:.9em}
 .courses p{font-size:13px;font-weight:normal;color:#8a7a88}
 .courses a{display:block;border:2px solid #f0bccd;border-radius:18px;padding:14px;margin:12px 0;color:#5a4a58;text-decoration:none;background:#fff;text-align:left;box-shadow:0 3px 0 #f0d4dd}
 .courses small{display:block;color:#a08a9a;margin-top:4px;font-weight:normal}
+/* 入力画面: 不等式の「形を かえる」/ 背の低い画面では キー・表・形のボタンを 少し 低くする(index.html と そろえる。上の 決まりを 上書きするので 最後に 置く) */
+.shape.reshape{flex:none;min-height:30px;font-size:12px;padding:2px 8px;border-style:dashed}
+.k[data-k="hint"]{white-space:nowrap}
+@media (max-height:860px){.tbl{font-size:15px;line-height:1.35}.tbl th,.tbl td{padding:2px 6px}.tbl .blank{min-height:1.85em;line-height:1.75}}
+@media (max-height:700px){#keys{gap:4px;padding:2px 6px 6px}#keys .k{height:38px}#keys .k.tall{height:42px}.shape{min-height:32px}}
+@media (max-height:600px){#keys .k{height:35px}#keys .k.tall{height:38px}#panel{padding:4px}
+  .tbl{font-size:14px;margin:2px auto}.tbl th{font-size:12px}.tbl th,.tbl td{padding:1px 4px}.tbl .blank{min-height:1.55em;line-height:1.5}.qans .qs:has(+ .qtbl){display:none}}
 </style>
 </head>
 <body>
