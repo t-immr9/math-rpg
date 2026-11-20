@@ -1140,6 +1140,7 @@ function checkQuestion(q) {
     }
     q.explain.forEach(function (l) { mathHTML(l); });
     q.mistakes.forEach(function (m) { mathHTML(m.msg); });
+    if (q.partialMsg !== undefined) { if (typeof q.partialMsg !== 'string' || !q.partialMsg || kind !== 'form' || q.answers.length < 2) return 'partialMsg は 空欄が 2つ以上の 空欄の形の問題に、文で 書く'; mathHTML(q.partialMsg); }
   } catch (e) { return e.message; }
   return null;
 }
@@ -2105,7 +2106,11 @@ M.start = function (courseId, mount, host) {
         if (kind === 'ineq' && !shape) { note = '先に 答えの形を えらぼう'; return render(); }
         for (let i = 0; i < cells.length; i++) {
           const cc = cells[i];
-          if (cc.num === '' || (cc.num === '-' && cc.den !== null) || cc.den === '') { act = i; cc.part = cc.num === '' || cc.num === '-' ? 'num' : 'den'; note = 'あいている ところが あるよ'; return render(); }
+          if (cc.num === '' || (cc.num === '-' && cc.den !== null) || cc.den === '') {
+            act = i; cc.part = cc.num === '' || cc.num === '-' ? 'num' : 'den';
+            /* 空欄の一部だけ うめて 決定したとき、型に partialMsg があれば それを出す(例:2次方程式の解を 1つだけ 答えた) */
+            note = q.partialMsg && cells.some(function (o) { return o.num !== '' && o.num !== '-'; }) ? q.partialMsg : 'あいている ところが あるよ'; return render();
+          }
         }
         const raws = cells.map(raw), j = judgeAny(q, kind === 'ineq' ? { kind: shape, eq: eq, raws: raws } : raws);
         if (j.result === 'invalid') { act = Math.min(j.index, Math.max(0, cells.length - 1)); note = '書き方を たしかめよう(例:2√3、5π、0.5、− は先頭)'; return render(); }

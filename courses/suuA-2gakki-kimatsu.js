@@ -497,8 +497,9 @@ types['cc-relation'] = {
   }
 };
 types['cc-tanlen'] = {
-  name: '共通接線の長さ(三平方の定理)', level: 3,
+  name: '共通接線の長さ(三平方の定理。外側・内側の共通接線)', level: 3,
   gen: function (R) {
+    if (R.chance(0.35)) return innerTangent(R);
     const ext = R.chance(0.4), r1 = R.int(1, 4), R1 = r1 + R.int(1, 4), d = ext ? R1 + r1 : R1 + r1 + R.int(1, 5), sq = d * d - (R1 - r1) * (R1 - r1), ans = sqrtStr(sq);
     const n = [(R1 - r1) / d, Math.sqrt(1 - (R1 - r1) * (R1 - r1) / (d * d))], A = [R1 * n[0], R1 * n[1]], B = [d + r1 * n[0], r1 * n[1]], Oa = [0, 0], Ob = [d, 0];
     const mis = [{ answers: [sqrtStr(d * d + (R1 - r1) * (R1 - r1))], tag: 'tan-pyth', msg: '中心間の距離 d が 斜辺。AB^2 = d^2 - (半径の差)^2 と 引き算になるよ' }, m1(d, 'tan-d', '中心間の距離 そのものではないよ。O\' から OA に 垂線を引いて、直角三角形を作ろう')];
@@ -515,6 +516,75 @@ types['cc-tanlen'] = {
     };
   }
 };
+/* 内側の共通接線(2つの円の間を通り、中心を結ぶ線分と交わる接線)。AB^2 = d^2 - (半径の和)^2 */
+function innerTangent(R) {
+  const r1 = R.int(1, 4), R1 = r1 + R.int(1, 3), d = R1 + r1 + R.int(1, 5), s = R1 + r1, sq = d * d - s * s, ans = sqrtStr(sq);
+  const n = [s / d, Math.sqrt(1 - s * s / (d * d))], A = [R1 * n[0], R1 * n[1]], B = [d - r1 * n[0], -r1 * n[1]], Oa = [0, 0], Ob = [d, 0];
+  const mis = [{ answers: [sqrtStr(d * d - (R1 - r1) * (R1 - r1))], tag: 'tan-diff', msg: '内側の共通接線では、半径の「和」を使う。半径の差を使うのは 外側の共通接線だよ' },
+    { answers: [sqrtStr(d * d + s * s)], tag: 'tan-pyth', msg: '中心間の距離 d が 斜辺。AB^2 = d^2 - (半径の和)^2 と 引き算になるよ' }, m1(d, 'tan-d', '中心間の距離 そのものではないよ。O\' を通り AB に平行な直線を引いて、直角三角形を作ろう')];
+  return {
+    text: '半径 ' + R1 + ' の円 O と 半径 ' + r1 + ' の円 O\' があり、中心間の距離は ' + d + ' である。図のように 2つの円の間を通る 共通接線(内側の共通接線)が 2つの円と A、B で接するとき、線分 AB の長さを求めよ。',
+    fig: geo([{ t: 'circle', c: Oa, r: R1 }, { t: 'circle', c: Ob, r: r1 }, { t: 'seg', a: Oa, b: Ob }, { t: 'seg', a: Oa, b: A }, { t: 'seg', a: Ob, b: B }, { t: 'seg', a: A, b: B, color: 'acc', w: 2.4, label: 'x' },
+      { t: 'right', at: A, a: Oa, b: B }, { t: 'right', at: B, a: Ob, b: A }, { t: 'point', p: A, label: 'A', pos: 'n' }, { t: 'point', p: B, label: 'B', pos: 's' }, { t: 'point', p: Oa, label: 'O', pos: 's' }, { t: 'point', p: Ob, label: "O'", pos: 'n' }]),
+    form: 'AB = □', answers: [ans], keys: ['√'], num: [G.dist(A, B)],
+    hint: 'O\' を通り AB に平行な直線を引き、OA の延長との交点を H とする。斜辺が 中心間の距離、OH が 半径の和の 直角三角形が できる',
+    explain: ['O\' を通り AB に平行な直線と OA の延長の交点を H とすると、OH = ' + R1 + ' + ' + r1 + ' = ' + s + '、斜辺 OO\' = ' + d, 'AB^2 = O\'H^2 = ' + d + '^2 - ' + s + '^2 = ' + sq, 'AB = ' + am(ans)],
+    mistakes: U.mistakes([ans], mis)
+  };
+}
+/* 方べきの定理で 2次方程式になる型(もとは 隠しダンジョンの hx-power-quad)。接線 PT と 割線 PAB */
+const HQ = [[2, 6, 4], [3, 9, 6], [4, 5, 6], [1, 8, 3], [4, 12, 8], [8, 10, 12], [9, 7, 12], [2, 16, 6], [1, 3, 2], [3, 1, 2], [5, 4, 6]].filter(function (v) { return v[0] * (v[0] + v[1]) === v[2] * v[2]; });
+types['pw-tan-quad'] = {
+  name: '方べきの定理(接線と割線)で 2次方程式になる型', level: 3,
+  gen: function (R) {
+    const v = R.pick(HQ), x = v[0], m = v[1], t = v[2], s = powTan(x, x + m, R.pick([0.7, 1, 1.4]), 'PT'), ans = N(x);
+    s.fig.items = s.fig.items.filter(function (it) { return !(it.t === 'seg' && it.label === 'x'); }).concat([{ t: 'seg', a: [0, 0], b: [x, 0], color: 'acc', w: 2.4, label: 'x', side: -1 }]);
+    return {
+      text: '点 P から 円に 接線 PT と、円と 2点 A、B で交わる直線を引く。PT = ' + t + '、AB = ' + m + ' のとき、PA = x の値を求めよ。', fig: s.fig, form: 'x = □', answers: [ans], keys: ['分数'],
+      verify: function (w) { return w[0] > 0 && Math.abs(w[0] * (w[0] + m) - t * t) < 1e-9; },
+      hint: 'PB = x + ' + m + '。方べきの定理 PA·PB = PT^2 から、x の 2次方程式を作ろう',
+      explain: ['PB = x + ' + m + ' だから x(x + ' + m + ') = ' + t + '^2', 'x^2 + ' + m + 'x - ' + t * t + ' = 0 より (x - ' + x + ')(x + ' + (x + m) + ') = 0', 'x > 0 より x = ' + x],
+      mistakes: U.mistakes([ans], [{ answers: [F(t * t, m)], tag: 'power-chord', msg: 'PB の代わりに 弦の長さ AB を かけていないかな。PB = x + ' + m }, m1(x + m, 'quad-root', 'それは PB の長さ。求めるのは PA = x(もう一方の解 -' + (x + m) + ' は 長さにならない)'),
+        m1(-(x + m), 'quad-root', '長さは 正の数。x > 0 のほうを 選ぼう')])
+    };
+  }
+};
+/* 円の内部の点 P で 弦 AC、BD が交わる。PA = a、PC = c、PB = x、PD = k - x。PA·PC = PB·PD から x(k - x) = ac */
+types['pw-chord-quad'] = {
+  name: '方べきの定理(交わる 2本の弦)で 2次方程式になる型', level: 3,
+  gen: function (R) {
+    const dbl = R.chance(0.25);           // 重解(x がただ 1つ)の場合
+    const v = pickUntil(function () {
+      const x1 = R.int(1, 6), x2 = dbl ? x1 : R.int(x1 + 1, 9), p = x1 * x2, fs = [];
+      for (let a = 1; a <= 12; a++) if (p % a === 0 && p / a <= 12) fs.push([a, p / a]);
+      const ok = fs.filter(function (f) { return !(f[0] === x1 && f[1] === x2) && !(f[0] === x2 && f[1] === x1); });     // PA、PC が PB、PD と 同じ組に ならないように
+      return ok.length ? [x1, x2].concat(R.pick(ok)) : null;
+    }, function (v) {
+      return !!v && v[0] + v[1] <= 15 && v[1] <= 4 * v[0] && Math.max(v[2], v[3]) <= 4 * Math.min(v[2], v[3]) &&      // 長さの比は 4倍まで(P が 円のふちに 寄って 図が 見にくくならないように)
+        !(v[0] + v[1] === 8 && v[2] * v[3] === 12 && (v[2] === 3 || v[2] === 4));                                       // PA = 3、PC = 4、PD = 8 - x の組は 出さない
+    }, dbl ? [4, 4, 2, 8] : [3, 4, 2, 6]);
+    const x1 = v[0], x2 = v[1], a = v[2], c = v[3], k = x1 + x2, two = x1 !== x2, phi = R.pick([55, 70, 115, 125]);
+    const u = [Math.cos(phi * DEG), Math.sin(phi * DEG)], P = [0, 0], A = [-a, 0], C = [c, 0], B = [x1 * u[0], x1 * u[1]], D = [-x2 * u[0], -x2 * u[1]], cir = G.circum(A, C, B);
+    const ok = function (x) { return x > 0 && x < k && Math.abs(x * (k - x) - a * c) < 1e-9; };
+    const ans = two ? [N(x1), N(x2)] : [N(x1)], mis = [];
+    const pair = c * k / (a + c);                                    // PA·PB = PC·PD と 組を まちがえた値
+    if (Math.abs(pair - x1) > 1e-9 && Math.abs(pair - x2) > 1e-9) mis.push({ answers: two ? [F(c * k, a + c), '*'] : [F(c * k, a + c)], tag: 'power-pair', msg: 'かけるのは 同じ弦の 2つの部分。PA·PC = PB·PD だよ' });
+    if (two) [x1, x2].forEach(function (r) { mis.push({ answers: [N(r), N(r)], tag: 'quad-both', msg: 'x = ' + r + ' は 合っている。もう1つの解も あるよ(どちらも 0 < x < ' + k + ' なので 両方 あてはまる)' }); });
+    mis.push(two ? { answers: [N(a * c), '*'], tag: 'power-k', msg: 'x(' + k + ' - x) = ' + a * c + ' を 2次方程式に 整理して 解こう' } : m1(a * c, 'power-k', 'x(' + k + ' - x) = ' + a * c + ' を 2次方程式に 整理して 解こう'));
+    return {
+      text: '円の内部の点 P で、2本の弦 AC、BD が 交わっている。PA = ' + a + '、PC = ' + c + '、PB = x、PD = ' + k + ' - x のとき、x の値を' + (two ? ' すべて' : '') + '求めよ。',
+      fig: geo([{ t: 'circle', c: cir.c, r: cir.r }, { t: 'seg', a: A, b: C }, { t: 'seg', a: P, b: B, color: 'acc', w: 2.4, label: 'x' }, { t: 'seg', a: P, b: D, label: k + ' - x' },
+        pnt(A, 'A', { away: cir.c }), pnt(B, 'B', { away: cir.c }), pnt(C, 'C', { away: cir.c }), pnt(D, 'D', { away: cir.c }), pnt(P, 'P', { away: undefined, dir: phi > 90 ? 45 : 135 })]),
+      form: two ? 'x = □、□' : 'x = □', answers: ans, unordered: two ? [[0, 1]] : undefined, keys: ['分数'],
+      partialMsg: two ? 'もう1つの解も あるよ。x(' + k + ' - x) = ' + a * c + ' の解は 2つ。両方の空欄に 入れよう' : undefined,
+      verify: function (w) { return w.every(ok) && (!two || Math.abs(w[0] - w[1]) > 1e-9) && Math.abs(G.dist(D, cir.c) - cir.r) < 1e-6; },      // 図の D が 本当に 円周上に ある(方べきの定理が 成り立つ)
+      hint: '方べきの定理 PA·PC = PB·PD。PD = ' + k + ' - x として 2次方程式を 作ろう',
+      explain: ['PA·PC = PB·PD より ' + a + '·' + c + ' = x(' + k + ' - x)', 'x^2 - ' + k + 'x + ' + a * c + ' = 0 より ' + (two ? '(x - ' + x1 + ')(x - ' + x2 + ') = 0' : '(x - ' + x1 + ')^2 = 0'),
+        two ? 'x = ' + x1 + '、' + x2 + '(どちらも 0 < x < ' + k + ' なので 両方 あてはまる)' : 'x = ' + x1],
+      mistakes: U.mistakes(ans, mis, two ? [[0, 1]] : [])
+    };
+  }
+};
 
 /* ==================== 作図の工房(方針を選ぶ・手順を並べる) ==================== */
 const ORD1 = [
@@ -525,7 +595,9 @@ const ORD1 = [
 const ORD2 = [
   ['△ABC の外接円', ['辺 AB の垂直二等分線を引く', '辺 BC の垂直二等分線を引き、2本の交点を O とする', '点 O を中心として、半径 OA の円をかく']],
   ['線分 AB を 1：2 に内分する点', ['点 A から 半直線 AX を引き、AX 上に 等しい間隔で 3点 C、D、E を 順にとる', '点 E と 点 B を結ぶ', '点 C を通り 直線 EB に平行な直線を引き、線分 AB との交点を P とする']],
-  ['円 O の外部の点 P から 円 O に引いた接線', ['線分 OP の垂直二等分線を引き、線分 OP との交点を M とする', '点 M を中心として 半径 MO の円をかき、円 O との交点を A、B とする', '直線 PA、PB を引く']]];
+  ['円 O の外部の点 P から 円 O に引いた接線', ['線分 OP の垂直二等分線を引き、線分 OP との交点を M とする', '点 M を中心として 半径 MO の円をかき、円 O との交点を A、B とする', '直線 PA、PB を引く']],
+  ['∠XOY の辺 OY 上の点 P で OY に接し、辺 OX にも接する円', ['∠XOY の二等分線を引く', '点 P を通り 辺 OY に垂直な直線を引き、二等分線との交点を Q とする', '点 Q を中心として、半径 QP の円をかく']],
+  ['点 P で直線 ℓ に接し、ℓ 上にない点 Q を通る円', ['点 P を通り 直線 ℓ に垂直な直線を引く', '線分 PQ の垂直二等分線を引き、先に引いた垂線との交点を O とする', '点 O を中心として、半径 OP の円をかく']]];
 function orderType(name, level, sets) {
   return { name: name, level: level, gen: function (R) {
     const v = R.pick(sets);
@@ -537,7 +609,55 @@ function orderType(name, level, sets) {
   } };
 }
 types['sk-order-basic'] = orderType('作図の手順(垂直二等分線・角の二等分線・垂線・平行線)', 1, ORD1);
-types['sk-order-adv'] = orderType('作図の手順(外接円・1:2 の内分点・外部の点からの接線)', 2, ORD2);
+types['sk-order-adv'] = orderType('作図の手順(外接円・1:2 の内分点・外部の点からの接線・接する円)', 2, ORD2);
+/* 作図の手順の空欄(考査と同じ形式)。手順の文の #1 #2 … が 空欄 ①②…。1問で 空欄 1つを 語群から選ぶ。
+   blanks: [正解, [[まぎらわしい語, ひとこと], …]]。同じ長さになる線分(半径 OP と OQ など)は まちがいの語に 入れない */
+const FILL_HINT = { pb: '2点から 等しい距離 → 垂直二等分線', ab: '角の 2辺から 等しい距離 → 角の二等分線', perp: '接点を通る半径は 接線に垂直', cross: '2本の線が 交わる点は「交点」' };
+const FILL = [
+  ['∠XOY の辺 OY 上の点 P で OY に接し、辺 OX にも接する円', ['∠XOY の #1 を引く', '点 P を通る 辺 OY の #2 を引き、1. の直線との #3 を Q とする', '点 Q を中心として、半径 #4 の円をかく'],
+    [['二等分線', [['垂直二等分線', '円の中心は 2辺 OX、OY から 等しい距離にある。角の 2辺から 等しい距離 → 角の二等分線'], ['中線', '中線は 三角形の頂点と 対辺の中点を結ぶ線。ここでは 使わないよ']]],
+      ['垂線', [['平行線', '接点 P を通る半径は 接線 OY に 垂直。だから 中心は P を通る OY の垂線上にある'], ['垂直二等分線', '線分の垂直二等分線ではなく、点 P を通る 垂線を引くよ']]],
+      ['交点', [['接点', '2本の直線が 交わる点は「交点」。接点は 円と接線が 接する点'], ['中点', '中点は 線分を 2等分する点。2本の直線が 交わる点は「交点」'], ['頂点', '頂点は 角や多角形の かどの点。2本の直線が 交わる点は「交点」']]],
+      ['QP', [['OP', 'O は 角の頂点で、円の中心ではないよ。中心 Q から 接点 P までが 半径'], ['OQ', 'OQ は 角の頂点から 中心までの長さ。半径は 中心 Q と 接点 P の距離']]]], 'ab'],
+  ['点 P で直線 ℓ に接し、ℓ 上にない点 Q を通る円', ['点 P を通る 直線 ℓ の #1 を引く', '線分 PQ の #2 を引き、1. の直線との #3 を O とする', '点 O を中心として、半径 #4 の円をかく'],
+    [['垂線', [['平行線', '接点 P を通る半径は 接線 ℓ に 垂直。だから 中心は P を通る ℓ の垂線上にある'], ['二等分線', '角の二等分線ではなく、点 P を通る ℓ の垂線を引くよ']]],
+      ['垂直二等分線', [['二等分線', '円は P と Q を通るので、中心は P、Q から 等しい距離にある。2点から 等しい距離 → 垂直二等分線'], ['垂線', 'P、Q から 等しい距離の点は、線分 PQ の 垂直二等分線の上にあるよ']]],
+      ['交点', [['接点', '2本の直線が 交わる点は「交点」。接点は 円と接線が 接する点'], ['中点', '中点は 線分 PQ を 2等分する点。中心は 2本の直線の「交点」'], ['頂点', '頂点は 角や多角形の かどの点。2本の直線が 交わる点は「交点」']]],
+      ['OP', [['PQ', 'PQ は 円周上の 2点を結ぶ弦。半径は 中心 O から 円周上の点までの長さ'], ['QP', 'QP は PQ と同じ 弦。半径は 中心 O から P までの長さ']]]], 'pb'],
+  ['線分 AB の垂直二等分線', ['2点 A、B を それぞれ中心として、#1 半径の円をかく', '2つの円の #2 を P、Q とする', '直線 #3 を引く'],
+    [['等しい', [['異なる', '半径が ちがうと、交点が A、B から 等しい距離に ならないよ'], ['AB の半分の', '半径が AB の半分だと、2つの円は 1点でしか 交わらない。AB の半分より 大きく とる']]],
+      ['交点', [['接点', '2つの円が 交わる点は「交点」'], ['中点', '中点は まだ 分からない。2つの円の「交点」を とる'], ['頂点', '2つの円が 交わる点は「交点」']]],
+      ['PQ', [['AB', 'AB は もとの線分。2つの交点 P、Q を結ぶ直線が 垂直二等分線'], ['AP', 'AP は A と 交点を結ぶ線。P、Q を結ぶよ']]]], 'pb'],
+  ['∠AOB の二等分線', ['点 O を中心とする円をかき、2辺 OA、OB との #1 を それぞれ C、D とする', '2点 C、D を それぞれ中心として、#2 半径の円をかき、交点を P とする', '半直線 #3 を引く'],
+    [['交点', [['接点', '円と 辺が 交わる点は「交点」'], ['中点', '辺の中点ではなく、円と 辺の「交点」をとる'], ['頂点', '頂点は 角の かどの点 O。円と 辺の「交点」をとる']]],
+      ['等しい', [['異なる', '半径が ちがうと、P が 2辺から 等しい距離に ならないよ'], ['OC と 同じ', '半径を OC と同じにすると、P が O と 重なることがある。等しい半径なら 何でもよい']]],
+      ['OP', [['CD', 'CD は 円の交点どうしを結ぶ線。角の二等分線は 頂点 O と P を結ぶ'], ['CP', 'CP は C と P を結ぶ線。O から P へ 半直線を引く']]]], 'ab'],
+  ['△ABC の外接円', ['辺 AB の #1 を引く', '辺 BC の垂直二等分線を引き、2本の #2 を O とする', '点 O を中心として、半径 #3 の円をかく'],
+    [['垂直二等分線', [['二等分線', '外接円の中心は 3つの頂点から 等しい距離。2点から 等しい距離 → 垂直二等分線'], ['中線', '中線の交点は 重心。外接円の中心(外心)は 垂直二等分線の交点']]],
+      ['交点', [['接点', '2本の直線が 交わる点は「交点」'], ['中点', '中点ではなく、2本の垂直二等分線の「交点」'], ['頂点', '三角形の頂点ではなく、2本の直線の「交点」']]],
+      ['OA', [['AB', 'AB は 三角形の辺。半径は 中心 O から 頂点までの長さ'], ['BC', 'BC は 三角形の辺。半径は 中心 O から 頂点までの長さ']]]], 'pb'],
+  ['円 O の外部の点 P から 円 O に引いた接線', ['線分 OP の #1 を引き、線分 OP との交点を M とする', '点 M を中心として 半径 #2 の円をかき、円 O との交点を A、B とする', '直線 #3 を引く'],
+    [['垂直二等分線', [['二等分線', '線分 OP の 中点 M を求めるので、OP の 垂直二等分線を引く'], ['垂線', 'OP の中点を求めるので、垂直二等分線を引く']]],
+      ['MO', [['OP', '半径 OP では 大きすぎる。OP を 直径とする円なので、半径は MO'], ['OA', 'OA は 円 O の半径。かくのは OP を 直径とする円']]],
+      ['PA、PB', [['OA、OB', 'OA、OB は 円 O の半径。接線は P と 接点を結ぶ直線'], ['MA、MB', 'MA、MB は かいた円の半径。接線は P と 接点を結ぶ直線']]]], 'perp']];
+const CIRC = ['①', '②', '③', '④'];
+function fillStep(st, show, ask) { return st.replace(/#(\d)/g, function (_, d) { const i = +d - 1; return i === ask ? '［ ' + CIRC[i] + ' ］' : show ? show[i] : '［ ' + CIRC[i] + ' ］'; }); }
+types['sk-fill'] = {
+  name: '作図の手順の空欄に入るものを選ぶ', level: 2,
+  gen: function (R) {
+    const v = R.pick(FILL), bl = v[2], k = R.int(0, bl.length - 1), right = bl[k][0], ans = bl.map(function (b) { return b[0]; });
+    const opts = [{ text: right, ok: true }], seen = {}; seen[right] = 1;
+    bl[k][1].forEach(function (w) { if (!seen[w[0]]) { seen[w[0]] = 1; opts.push({ text: w[0], tag: 'fill-' + v[3], msg: w[1] }); } });
+    bl.forEach(function (b, i) { if (i !== k && !seen[b[0]]) { seen[b[0]] = 1; opts.push({ text: b[0], tag: 'fill-other', msg: 'それは ［ ' + CIRC[i] + ' ］に入るもの。［ ' + CIRC[k] + ' ］の 手順を 読みなおそう' }); } });
+    return {
+      text: v[0] + 'を 次の手順で 作図する。［ ' + CIRC[k] + ' ］に入るものを 語群から選べ。\n' + v[1].map(function (st, i) { return (i + 1) + '. ' + fillStep(st, null, k); }).join('\n'),
+      choices: opts, cols: 2,
+      verify: function () { return opts.filter(function (o) { return o.ok; }).length === 1 && opts.length >= 3 && v[1].join('').split('#').length - 1 === bl.length; },
+      hint: FILL_HINT[v[3]],
+      explain: v[1].map(function (st, i) { return (i + 1) + '. ' + fillStep(st, ans, -1); })
+    };
+  }
+};
 const CEN = ['3辺の垂直二等分線の交点', '3つの内角の二等分線の交点', '3本の中線の交点', '3つの頂点から 対辺に引いた垂線の交点'];
 const CEN_WHY = ['それは 外心。3つの頂点から 等しい距離にある点だよ', 'それは 内心。3つの辺から 等しい距離にある点だよ', 'それは 重心。頂点と 対辺の中点を結ぶ線分(中線)の交点だよ', 'それは 垂心。外心・内心・重心の どれでもないよ'];
 types['sk-center'] = {
@@ -694,9 +814,25 @@ types['sp-perp-word'] = {
   }
 };
 types['sp-prism-rel'] = {
-  name: '三角柱での 辺と面の位置関係', level: 2,
+  name: '三角柱での 辺と面の位置関係(ねじれ・直交する辺、面と平行・垂直な辺)', level: 2,
   gen: function (R) {
-    const k = R.int(0, 2), top = PRISM.faces[0], bot = PRISM.faces[1];
+    const k = R.int(0, 3), top = PRISM.faces[0], bot = PRISM.faces[1];
+    if (k === 3) {        // 直交する辺(交わって 垂直)。底面は 正三角形なので、底面の辺どうしは 60° で 交わる
+      const e = R.pick(PRISM.edges), others = PRISM.edges.filter(function (x) { return x !== e; });
+      const rel = function (x) { const r = edgeRel(PRISM, e, x); return r === 'cross' ? (Math.abs(dot(eDir(PRISM, e), eDir(PRISM, x))) < 1e-9 ? 'perp' : 'cross60') : r; };
+      const hit = others.filter(function (x) { return rel(x) === 'perp'; }), vert = Math.abs(eDir(PRISM, e)[2]) > 1e-9;
+      return {
+        text: '底面が 正三角形の 三角柱 ABC-DEF で、側面は すべて 底面に垂直である。辺 ' + e + ' と 直交する辺を すべて選べ。', fig: Object.assign({}, PRISM, { mark: [e] }), cols: 4,
+        choices: others.map(function (x) {
+          const r = rel(x);
+          return { text: x, ok: r === 'perp', tag: 'edge-' + r, msg: { para: '辺 ' + x + ' は 辺 ' + e + ' と 平行だよ', skew: '辺 ' + x + ' は 辺 ' + e + ' と ねじれの位置。直交は 交わるときだけ いうよ', cross60: '辺 ' + x + ' は 辺 ' + e + ' と 交わるけれど、正三角形の角 60° で 交わる。垂直ではないよ' }[r] };
+        }),
+        verify: function () { return hit.length === (vert ? 4 : 2) && hit.every(function (x) { return Math.abs(acute(eDir(PRISM, e), eDir(PRISM, x)) - 90) < 1e-6; }); },
+        missingMsg: 'えらんだものは 合っている。全部で ' + (vert ? 4 : 2) + '本 あるよ',
+        hint: '直交は「交わって 垂直」。側面の たての辺は 底面の辺と 垂直。底面の辺どうしは 正三角形の角(60°)',
+        explain: ['辺 ' + e + ' と 交わる辺を さがす(平行な辺・ねじれの位置の辺は 入れない)', vert ? 'たての辺は 底面に垂直なので、上下の底面の辺と 垂直に交わる' : '底面の辺どうしは 60° で 交わる。たての辺とは 垂直に交わる', '直交する辺は ' + hit.join(', ')]
+      };
+    }
     if (k === 0) {
       const e = R.pick(PRISM.edges), others = PRISM.edges.filter(function (x) { return x !== e; }), hit = others.filter(function (x) { return edgeRel(PRISM, e, x) === 'skew'; });
       return {
@@ -720,16 +856,17 @@ types['sp-prism-rel'] = {
 types['sp-prism-angle'] = {
   name: '三角柱での 2直線・2平面のなす角', level: 3,
   gen: function (R) {
-    const be = R.pick([30, 60, 40, 50, 35, 55]), ab = 5 * Math.cos(be * DEG), h = 5;
+    const be = R.pick([30, 60, 40, 50, 35, 55, 45, 45]), iso = be === 45, ab = 5 * Math.cos(be * DEG), h = 5;      // 45° は 底面が 直角二等辺三角形
     const B = [0, 0], C = [5, 0], A = [ab * Math.cos(be * DEG), ab * Math.sin(be * DEG)], V = { A: [A[0], A[1], h], B: [0, 0, h], C: [5, 0, h], D: [A[0], A[1], 0], E: [0, 0, 0], F: [5, 0, 0] };
     const S = { type: 'solid', verts: V, edges: ['AB', 'BC', 'CA', 'DE', 'EF', 'FD', 'AD', 'BE', 'CF'], faces: [['A', 'B', 'C'], ['D', 'E', 'F'], ['A', 'B', 'E', 'D'], ['B', 'C', 'F', 'E'], ['C', 'A', 'D', 'F']] };
     const items = [['l', 'AB', 'EF', be], ['l', 'AC', 'EF', 90 - be], ['l', 'AB', 'DF', 90], ['p', 'ABED', 'BCFE', be], ['p', 'CADF', 'BCFE', 90 - be], ['l', 'AD', 'BC', 90]], v = R.pick(items), line = v[0] === 'l', a = v[1].split(''), b = v[2].split(''), ans = N(v[3]);
     return {
-      text: '三角柱 ABC-DEF で、底面は ∠BAC = 90°、∠ABC = ' + be + '° の直角三角形であり、側面は すべて 底面に垂直である。' + (line ? '直線 ' + v[1] + ' と 直線 ' + v[2] : '平面 ' + v[1] + ' と 平面 ' + v[2]) + ' のなす角 θ を求めよ(0° ≦ θ ≦ 90°)。',
+      text: '三角柱 ABC-DEF で、底面は ' + (iso ? '∠BAC = 90°、AB = AC の 直角二等辺三角形' : '∠BAC = 90°、∠ABC = ' + be + '° の直角三角形') + 'であり、側面は すべて 底面に垂直である。' + (line ? '直線 ' + v[1] + ' と 直線 ' + v[2] : '平面 ' + v[1] + ' と 平面 ' + v[2]) + ' のなす角 θ を求めよ(0° ≦ θ ≦ 90°)。',
       fig: line ? Object.assign({}, S, { mark: [a, b] }) : Object.assign({}, S, { shade: [a, b] }), form: 'θ = □°', answers: [ans], num: [line ? acute(eDir(S, a), eDir(S, b)) : acute(fNormal(S, a), fNormal(S, b))],
       hint: line ? 'DE ∥ AB、EF ∥ BC、DF ∥ AC。平行移動して 底面の三角形の角に 直そう' : '2つの側面の交線は 底面に垂直。だから なす角は 底面の三角形の角と 同じ',
-      explain: line ? ['EF ∥ BC、DF ∥ AC(上下の底面の辺は 平行)', '平行移動すると、底面の △ABC の中の角になる(∠ACB = ' + (90 - be) + '°)', 'θ = ' + ans + '°']
-        : ['2つの側面の交線は 底面に垂直', 'なす角は、底面の三角形で その交線が通る頂点の角(∠ACB = ' + (90 - be) + '°)', 'θ = ' + ans + '°'],
+      explain: line ? (v[1] === 'AD' ? ['側面は 底面に垂直なので、辺 AD は 底面 ABC に垂直', 'BC は 底面上の直線なので AD ⊥ BC', 'θ = 90°']
+          : ['EF ∥ BC、DF ∥ AC(上下の底面の辺は 平行)', '平行移動すると、底面の △ABC の中の角になる(' + (v[3] === 90 ? '∠BAC = 90°' : v[3] === be ? '∠ABC = ' + be + '°' : '∠ACB = ' + (90 - be) + '°') + ')', 'θ = ' + ans + '°'])
+        : ['2つの側面の交線は 底面に垂直', 'なす角は、底面の三角形で その交線が通る頂点の角(' + (v[3] === be ? '∠ABC = ' + be + '°' : '∠ACB = ' + (90 - be) + '°') + ')', 'θ = ' + ans + '°'],
       mistakes: U.mistakes([ans], [m1(v[3] === be ? 90 - be : be, 'angle-which', '底面の三角形の どの角に 当たるかを 確かめよう(∠ABC = ' + be + '°、∠ACB = ' + (90 - be) + '°)'), m1(v[3] === 90 ? be : 90, 'angle-look', '見た目で 決めず、平行移動して 底面の三角形の角に 直そう'),
         m1(180 - v[3], 'angle-range', 'なす角は 0° から 90° の範囲で 答えるよ')])
     };
@@ -837,6 +974,162 @@ types['soccer'] = {
     };
   }
 };
+/* ---------- 立方体・直方体(平面と直線の垂直、2平面、30°・60° の出る直方体) ---------- */
+const BOXES = [[4, 3, 5], [3, 2, 4], [5, 3, 2], [4, 2, 3]];        // 直方体 cuboid(AD, AB, AE)。4つの側面の形が ちがうもの
+function pickSolid(R) { if (R.chance(0.5)) return { S: CUBE, nm: '立方体' }; const d = R.pick(BOXES); return { S: M.solids.cuboid(d[0], d[1], d[2]), nm: '直方体' }; }
+function hasEdge(f, e) { return f.indexOf(e[0]) >= 0 && f.indexOf(e[1]) >= 0; }
+types['sp-perp-plane'] = {
+  name: '直線と平面の垂直(交わる 2直線に垂直 → 平面に垂直 → 平面上の直線と 90°)', level: 2,
+  gen: function (R) {
+    const so = pickSolid(R), S = so.S, X = R.pick(['AE', 'BF', 'CG', 'DH']), low = R.chance(0.5), foot = low ? X[1] : X[0], top = low ? X[0] : X[1];
+    const face = low ? S.faces[1] : S.faces[0], fn = '平面 ' + face.join(''), i = face.indexOf(foot);
+    const P = foot + face[(i + 1) % 4], Q = foot + face[(i + 3) % 4];                                   // foot で 交わる 面上の 2辺
+    const Y = R.chance(0.5) ? foot + face[(i + 2) % 4] : face[(i + 1) % 4] + face[(i + 3) % 4];          // 面の対角線(foot を 通る/通らない)
+    const XN = X, k = R.int(0, 2), skewY = Y.indexOf(foot) < 0;
+    const flow = ['辺 ' + XN + ' ⊥ ' + P + '、' + XN + ' ⊥ ' + Q + ' で、' + P + ' と ' + Q + ' は ' + fn + ' 上の 交わる 2直線', 'よって 辺 ' + XN + ' ⊥ ' + fn + '(平面上の 交わる 2直線に 垂直)'];
+    const perpOk = function () { return faceEdgeRel(S, face, X) === 'perp' && hasEdge(face, P) && hasEdge(face, Q) && Math.abs(acute(eDir(S, P), eDir(S, Q)) - 90) < 1e-6; };
+    const fig = Object.assign({}, S, { shade: [face], mark: [X] });
+    if (k === 0) {
+      const sides = S.faces.slice(2).filter(function (f) { return hasEdge(f, X); }), par = S.faces.slice(2).filter(function (f) { return !hasEdge(f, X); });
+      return {
+        text: so.nm + ' ABCD-EFGH で、辺 ' + XN + ' は 辺 ' + P + '、辺 ' + Q + ' の どちらとも 垂直に交わる。このことから、辺 ' + XN + ' と 垂直であると いえる平面は どれか。', fig: Object.assign({}, S, { mark: [X, P, Q] }), cols: 2,
+        choices: [{ text: fn, ok: true }].concat(sides.map(function (f) { return { text: '平面 ' + f.join(''), tag: 'perp-plane-on', msg: 'その平面は 辺 ' + XN + ' を 含んでいるよ。' + XN + ' と 垂直な平面は、' + P + ' と ' + Q + ' の 両方を 含む平面' }; }),
+          [{ text: '平面 ' + par[0].join(''), tag: 'perp-plane-para', msg: 'その平面と 辺 ' + XN + ' は 交わらない(平行)よ' }]),
+        verify: perpOk,
+        hint: '直線が 平面に垂直 ⇔ その平面上の 交わる 2直線に 垂直。' + P + ' と ' + Q + ' を 両方 含む平面を さがそう',
+        explain: flow.concat([XN + ' と 垂直な平面は ' + fn])
+      };
+    }
+    const th = acute(eDir(S, X), eDir(S, Y));
+    const wrong = [['45°', 'angle-look', '見た目で 決めないよ。' + XN + ' は ' + fn + ' に垂直なので、' + fn + ' 上の どの直線とも 垂直'], ['60°', 'angle-look', XN + ' ⊥ ' + fn + ' だから、' + fn + ' 上の直線 ' + Y + ' とは 90°'],
+      skewY ? [XN + ' と ' + Y + ' は 交わらないので 決まらない', 'angle-skew', 'ねじれの位置でも、平行移動して 交わらせれば なす角は 決まる。平面に垂直な直線は、その平面上の どの直線とも 垂直'] : ['30°', 'angle-look', XN + ' ⊥ ' + fn + ' だから、' + fn + ' 上の直線 ' + Y + ' とは 90°']];
+    return {
+      text: so.nm + ' ABCD-EFGH で、' + (k === 1 ? '辺 ' + XN + ' は ' + fn + ' と 垂直である。' : '辺 ' + XN + ' は 辺 ' + P + '、辺 ' + Q + ' の どちらとも 垂直に交わる。') + '直線 ' + XN + ' と 直線 ' + Y + ' のなす角 θ として 正しいものを 選べ。',
+      fig: Object.assign(fig, { segs: [{ e: Y, color: 'acc2', dash: false }] }), cols: 2, choices: ch('90°', wrong),
+      verify: function () { return perpOk() && Math.abs(th - 90) < 1e-6; },
+      hint: k === 1 ? '平面に垂直な直線は、その平面上の どの直線とも 垂直' : 'まず ' + XN + ' が どの平面に垂直かを 考えよう。平面上の 交わる 2直線に 垂直なら、その平面に 垂直',
+      explain: (k === 1 ? [XN + ' ⊥ ' + fn] : flow).concat([Y + ' は ' + fn + ' 上の直線' + (skewY ? '(ねじれの位置でも よい)' : '') + 'なので ' + XN + ' ⊥ ' + Y + '、θ = 90°'])
+    };
+  }
+};
+types['sp-planes'] = {
+  name: '2平面の交線・平行な面・垂直な面を選ぶ(立方体・直方体)', level: 1,
+  gen: function (R) {
+    const so = pickSolid(R), S = so.S, k = R.int(0, 2), f = R.pick(S.faces), fn = faceName(f), others = S.faces.filter(function (x) { return x !== f; });
+    const rel = function (x) { return len(cross(fNormal(S, f), fNormal(S, x))) < 1e-9 ? 'para' : Math.abs(dot(fNormal(S, f), fNormal(S, x))) < 1e-9 ? 'perp' : 'other'; };
+    if (k === 0) {
+      const g = R.pick(others.filter(function (x) { return rel(x) === 'perp'; })), gn = faceName(g), cand = S.edges.filter(function (e) { return hasEdge(f, e) || hasEdge(g, e); });
+      const line = cand.filter(function (e) { return hasEdge(f, e) && hasEdge(g, e); });
+      return {
+        text: so.nm + ' ABCD-EFGH で、' + fn + ' と ' + gn + ' の 交線になる辺を 選べ。', fig: Object.assign({}, S, { shade: [f, g] }), cols: 4,
+        choices: cand.map(function (e) { const inF = hasEdge(f, e); return { text: e, ok: hasEdge(f, e) && hasEdge(g, e), tag: 'plane-line', msg: '辺 ' + e + ' は ' + (inF ? fn : gn) + ' の上にあるが、' + (inF ? gn : fn) + ' の上には ないよ。交線は 両方の面に ふくまれる辺' }; }),
+        verify: function () { return line.length === 1; },
+        hint: '2つの平面の交線は、両方の平面に ふくまれる直線', explain: ['交線は、2つの面の 両方に ふくまれる辺', fn + ' と ' + gn + ' の 共通な頂点は ' + line[0].split('').join(' と '), '交線は 辺 ' + line[0]]
+      };
+    }
+    const want = k === 1 ? 'para' : 'perp', hit = others.filter(function (x) { return rel(x) === want; });
+    return {
+      text: so.nm + ' ABCD-EFGH で、' + fn + ' と ' + (k === 1 ? '平行な面を 選べ。' : '垂直な面を すべて選べ。'), fig: Object.assign({}, S, { shade: [f] }), cols: 2,
+      choices: others.map(function (x) { const r = rel(x); return { text: faceName(x), ok: r === want, tag: 'face-' + r, msg: r === 'para' ? faceName(x) + ' は ' + fn + ' と 向かい合う面。平行だよ' : faceName(x) + ' は ' + fn + ' と となり合う面。垂直に交わるよ' }; }),
+      verify: function () { return hit.length === (k === 1 ? 1 : 4); }, missingMsg: k === 1 ? undefined : 'えらんだものは 合っている。となり合う面は 4つ あるよ',
+      hint: '直方体では、向かい合う面は 平行、となり合う面は 垂直',
+      explain: [fn + ' と 向かい合う面は ' + others.filter(function (x) { return rel(x) === 'para'; }).map(faceName).join('') + '(平行)', 'となり合う 4つの面は どれも 垂直', (k === 1 ? '平行な面は ' : '垂直な面は ') + hit.map(faceName).join('、')]
+    };
+  }
+};
+/* 30°・60° の出る直方体。辺の長さは s か s√3。cuboid(AD, AB, AE) */
+const BOX3 = [[1, 3, 1], [3, 1, 1], [1, 1, 3], [1, 3, 3], [3, 1, 3], [3, 3, 1]];      // [AB, AD, AE] の 2乗の比(1 → s、3 → s√3)
+function lenStr(s, q) { return q === 1 ? N(s) : (s === 1 ? '' : s) + '√3'; }
+types['sp-box'] = {
+  name: '直方体(30°・60° の出る比)の 直交する辺・なす角・平行な面・垂直な辺', level: 3,
+  gen: function (R) {
+    const s = R.int(1, 3), p = R.pick(BOX3), L = { AB: lenStr(s, p[0]), AD: lenStr(s, p[1]), AE: lenStr(s, p[2]) }, num = function (q) { return s * Math.sqrt(q); };
+    const S = M.solids.cuboid(num(p[1]), num(p[0]), num(p[2])), k = R.int(0, 3), head = '直方体 ABCD-EFGH で、AB = ' + L.AB + '、AD = ' + L.AD + '、AE = ' + L.AE + ' である。';
+    const elen = function (e) { const v = eDir(S, e); return Math.abs(v[0]) > 1e-9 ? L.AD : Math.abs(v[1]) > 1e-9 ? L.AB : L.AE; };
+    if (k === 0 || k === 3) {
+      const e = R.pick(S.edges), f = R.pick(S.faces), fn = faceName(f);
+      const ok = k === 0 ? function (x) { return x !== e && edgeRel(S, e, x) === 'cross'; } : function (x) { return faceEdgeRel(S, f, x) === 'perp'; };
+      const list = S.edges.filter(function (x) { return k === 3 || x !== e; }), hit = list.filter(ok);
+      return {
+        text: head + (k === 0 ? '辺 ' + e + ' と 直交する辺を すべて選べ。' : fn + ' と 垂直な辺を すべて選べ。'), fig: Object.assign({}, S, k === 0 ? { mark: [e] } : { shade: [f] }), cols: 4,
+        choices: list.map(function (x) {
+          const r = k === 0 ? edgeRel(S, e, x) : faceEdgeRel(S, f, x);
+          return { text: x, ok: ok(x), tag: (k === 0 ? 'edge-' : 'face-edge-') + r, msg: k === 0 ? { para: '辺 ' + x + ' は 辺 ' + e + ' と 平行だよ', skew: '辺 ' + x + ' は ' + e + ' と ねじれの位置。垂直でも 交わらないので 直交ではないよ' }[r] : { on: '辺 ' + x + ' は ' + fn + ' の上にある辺。面上の辺は 入れないよ', para: '辺 ' + x + ' は ' + fn + ' と 平行だよ' }[r] };
+        }),
+        verify: function () {      // 直交: 辺 e と 90°。面と垂直: 面の法線と 平行(0°)
+          return hit.length === 4 && hit.every(function (x) { return k === 0 ? Math.abs(acute(eDir(S, x), eDir(S, e)) - 90) < 1e-6 : acute(eDir(S, x), fNormal(S, f)) < 1e-6; });
+        },
+        missingMsg: 'えらんだものは 合っている。全部で 4本 あるよ',
+        hint: k === 0 ? '直方体では、1つの辺の 両はしの頂点から出る辺が 直交する(長さは 関係ない)' : '面と垂直な辺は、その面に つきささる向きの辺',
+        explain: k === 0 ? ['辺 ' + e + ' の 両はしの頂点から、ほかの辺が 2本ずつ 出ている', '直方体の辺は どれも 垂直に交わる', '直交する辺は ' + hit.join(', ')] : [fn + ' の上の辺 4本は 入れない', '2つの面を つなぐ 4本の辺が ' + fn + ' と 垂直', '垂直な辺は ' + hit.join(', ')]
+      };
+    }
+    if (k === 2) {
+      const e = R.pick(S.edges), hit = S.faces.filter(function (f) { return faceEdgeRel(S, f, e) === 'para'; });
+      return {
+        text: head + '辺 ' + e + ' と 平行な面を すべて選べ。', fig: Object.assign({}, S, { mark: [e] }), cols: 2,
+        choices: S.faces.map(function (f) { const r = faceEdgeRel(S, f, e); return { text: faceName(f), ok: r === 'para', tag: 'face-edge-' + r, msg: r === 'on' ? '辺 ' + e + ' は ' + faceName(f) + ' の上にある。面上の辺は 平行とは いわないよ' : '辺 ' + e + ' は ' + faceName(f) + ' と 垂直に交わるよ' }; }),
+        verify: function () { return hit.length === 2; }, missingMsg: 'えらんだものは 合っている。全部で 2つ あるよ',
+        hint: '辺と平行な面は、その辺と 交わらない面(辺を ふくむ面は 入れない)',
+        explain: ['辺 ' + e + ' を ふくむ面 2つは 入れない', e + ' と 垂直に交わる面 2つも 入れない', '平行な面は ' + hit.map(faceName).join('、')]
+      };
+    }
+    /* なす角: 辺 X と 面の対角線 Y。θ を 先に決めて さがす */
+    const diags = []; S.faces.forEach(function (f) { diags.push([f[0] + f[2], f], [f[1] + f[3], f]); });
+    const pairs = []; S.edges.forEach(function (x) { diags.forEach(function (d) { const t = acute(eDir(S, x), eDir(S, d[0])), r = Math.round(t); if (Math.abs(t - r) < 1e-6 && [30, 45, 60, 90].indexOf(r) >= 0) pairs.push([x, d[0], d[1], r]); }); });
+    const want = R.pick([30, 60, 30, 60, 45, 90].filter(function (t) { return pairs.some(function (q) { return q[3] === t; }); })), pr = R.pick(pairs.filter(function (q) { return q[3] === want; }));
+    const X = pr[0], Y = pr[1], f = pr[2], th = pr[3], ans = N(th);
+    let ex;
+    if (th === 90) ex = ['辺 ' + X + ' は、対角線 ' + Y + ' を ふくむ ' + faceName(f) + ' に 垂直', 'だから ' + X + ' は ' + faceName(f) + ' 上の直線 ' + Y + ' と 垂直', 'θ = 90°'];
+    else {
+      const Pt = Y[0], Qt = Y[1], Rt = f.filter(function (v) { return v !== Pt && v !== Qt && len(cross(sub(S.verts[v], S.verts[Pt]), eDir(S, X))) < 1e-9; })[0];
+      ex = ['直線 ' + X + ' を 平行移動して ' + Pt + Rt + ' に重ねる。△' + Pt + Rt + Qt + ' は ∠' + Rt + ' = 90°、' + Pt + Rt + ' = ' + elen(Pt + Rt) + '、' + Rt + Qt + ' = ' + elen(Rt + Qt) + ' の直角三角形',
+        th === 45 ? '2辺が 等しいので 直角二等辺三角形' : '辺の比が 1 : √3 : 2 の直角三角形', 'θ = ∠' + Rt + Pt + Qt + ' = ' + ans + '°'];
+    }
+    return {
+      text: head + '直線 ' + X + ' と 直線 ' + Y + ' のなす角 θ を求めよ。ただし 0° ≦ θ ≦ 90° とする。', fig: Object.assign({}, S, { segs: [{ e: X, color: 'acc', dash: false }, { e: Y, color: 'acc2', dash: false }] }),
+      form: 'θ = □°', answers: [ans], num: [acute(eDir(S, X), eDir(S, Y))],
+      hint: th === 90 ? '一方が、もう一方を ふくむ面に 垂直なら 90°' : '一方を 平行移動して 交わらせ、直角三角形の 辺の比(1 : √3 : 2 や 1 : 1 : √2)を 見よう',
+      explain: ex,
+      mistakes: U.mistakes([ans], [th === 90 ? m1(45, 'angle-look', '見た目で 決めないよ。' + X + ' は ' + Y + ' を ふくむ面に 垂直') : m1(90 - th, 'angle-which', '直角三角形の どちらの角かを 確かめよう。' + X + ' を 平行移動した辺と ' + Y + ' の間の角'),
+        th === 30 || th === 60 ? m1(45, 'angle-square', '正方形の面ではないので 45° ではないよ。辺の比 1 : √3 を 見よう') : m1(60, 'angle-look', '辺の比を 確かめよう'), m1(180 - th, 'angle-range', 'なす角は 0° から 90° の範囲で 答えるよ')])
+    };
+  }
+};
+/* ---------- 正八面体の体積 ---------- */
+types['rp-octa'] = {
+  name: '立方体の中の 正八面体の体積', level: 3,
+  gen: function (R) {
+    const a = R.pick([2, 3, 4, 5, 6, 8, 10]), h = 2, V = Object.assign({}, CUBE.verts), cs = { P: [2, 2, 4], Q: [2, 2, 0], R: [2, 0, 2], S: [4, 2, 2], T: [2, 4, 2], U: [0, 2, 2] }, ans = F(a * a * a, 6);
+    Object.keys(cs).forEach(function (kk) { V[kk] = cs[kk]; });
+    const oe = ['PR', 'PS', 'PT', 'PU', 'QR', 'QS', 'QT', 'QU', 'RS', 'ST', 'TU', 'UR'];
+    const sc = a / 4, base = len(sub(cs.R, cs.S)) * sc, vol = base * base * (h * sc) / 3 * 2;
+    return {
+      text: '1辺の長さが ' + a + ' の立方体の、6つの面の 対角線の交点(面の中心)を結ぶと、正八面体ができる。この正八面体の体積を求めよ。',
+      fig: { type: 'solid', verts: V, edges: CUBE.edges, faces: CUBE.faces, labels: false, segs: oe.map(function (e) { return { e: e, color: 'acc', dash: false }; }) }, form: '□', answers: [ans], keys: ['分数'], num: [vol],
+      hint: '正八面体を、まん中の正方形で 上下 2つの四角錐に 分ける。底面の正方形は、対角線の長さが ' + a,
+      explain: ['まん中の正方形の面積は(対角線)×(対角線)÷2 = ' + a + '×' + a + '÷2 = ' + am(F(a * a, 2)), '四角錐 1つの高さは ' + am(F(a, 2)) + '。体積は {1/3}×' + am(F(a * a, 2)) + '×' + am(F(a, 2)) + ' = ' + am(F(a * a * a, 12)), '2つ分で ' + am(ans)],
+      mistakes: U.mistakes([ans], [{ answers: [F(a * a * a, 12)], tag: 'octa-half', msg: 'それは 四角錐 1つ分。上下 2つ あるよ' }, { answers: [F(a * a * a, 3)], tag: 'octa-base', msg: 'まん中の正方形は、1辺が ' + a + ' ではなく、対角線が ' + a + '。面積は ' + am(F(a * a, 2)) + ' だよ' },
+        { answers: [F(a * a * a, 2)], tag: 'vol-third', msg: '錐の体積は {1/3}×(底面積)×(高さ)。{1/3} を 忘れていないかな' }])
+    };
+  }
+};
+/* n√2/d を 最も簡単な形に */
+function r2(n, d) { const g = U.gcd(n, d); n /= g; d /= g; return (n === 1 ? '' : n) + '√2' + (d === 1 ? '' : '/' + d); }
+types['rp-octa-edge'] = {
+  name: '正八面体の 1辺の長さから 体積を求める', level: 3,
+  gen: function (R) {
+    const a = R.int(1, 6), a3 = a * a * a, ans = r2(a3, 3);
+    const hgt = Math.sqrt(a * a - Math.pow(a * Math.SQRT2 / 2, 2));          // 側面の辺(長さ a)と 正方形の対角線の半分から、三平方で 高さを求める
+    return {
+      text: '1辺の長さが ' + a + ' の正八面体の体積を求めよ。', fig: regular(8), form: '□', answers: [ans], keys: ['√', '分数'], num: [2 * (1 / 3) * a * a * hgt],
+      hint: 'まん中の正方形(1辺 ' + a + ')で、上下 2つの 正四角錐に 分ける。高さは 三平方の定理で',
+      explain: ['まん中の正方形は 1辺 ' + a + '。対角線の半分は ' + am(r2(a, 2)) + ' で、これが 四角錐の高さ(三平方の定理)', '四角錐 1つ = {1/3}×' + a + '^2×' + am(r2(a, 2)) + ' = ' + am(r2(a3, 6)), '2つ分で ' + am(ans)],
+      mistakes: U.mistakes([ans], [{ answers: [r2(a3, 6)], tag: 'octa-half', msg: 'それは 四角錐 1つ分。上下 2つ あるよ' }, { answers: [F(2 * a3, 3)], tag: 'octa-height', msg: '四角錐の高さは 辺の長さ ' + a + ' ではないよ。正方形の対角線の半分 ' + am(r2(a, 2)) + ' が 高さ' },
+        { answers: [r2(a3, 1)], tag: 'vol-third', msg: '錐の体積は {1/3}×(底面積)×(高さ)。{1/3} を 忘れていないかな' }])
+    };
+  }
+};
 
 /* ==================== 隠し:失われた定理の地下迷宮(考査範囲外) ==================== */
 types['hx-two-tangents'] = {
@@ -851,22 +1144,6 @@ types['hx-two-tangents'] = {
       hint: '円の外部の点から引いた 2本の接線の長さは 等しい(PA = PB)。△PAB は 二等辺三角形',
       explain: ['PA = PB より ∠PAB = (180° - ' + th + '°) ÷ 2 = ' + x + '°', '接弦定理より ∠ACB = ∠PAB', 'x = ' + x + '°'],
       mistakes: U.mistakes([ans], [m1(th, 'two-tan', '∠ACB は ∠APB と 等しくないよ。PA = PB を 使おう'), m1(180 - th, 'iso-half', '△PAB の底角は 2つある。2 で割ろう'), m1(th / 2, 'two-tan', '∠APB の半分ではなく、(180° - ∠APB) の半分だよ')])
-    };
-  }
-};
-const HQ = [[2, 6, 4], [3, 9, 6], [4, 5, 6], [1, 8, 3], [4, 12, 8], [8, 10, 12], [9, 7, 12], [2, 16, 6], [1, 3, 2], [3, 1, 2], [5, 4, 6]].filter(function (v) { return v[0] * (v[0] + v[1]) === v[2] * v[2]; });
-types['hx-power-quad'] = {
-  name: '発展: 方べきの定理で 2次方程式になる型', level: 5,
-  gen: function (R) {
-    const v = R.pick(HQ), x = v[0], m = v[1], t = v[2], s = powTan(x, x + m, R.pick([0.7, 1, 1.4]), 'PT'), ans = N(x);
-    s.fig.items = s.fig.items.filter(function (it) { return !(it.t === 'seg' && it.label === 'x'); }).concat([{ t: 'seg', a: [0, 0], b: [x, 0], color: 'acc', w: 2.4, label: 'x', side: -1 }]);
-    return {
-      text: '点 P から 円に 接線 PT と、円と 2点 A、B で交わる直線を引く。PT = ' + t + '、AB = ' + m + ' のとき、PA = x の値を求めよ。', fig: s.fig, form: 'x = □', answers: [ans], keys: ['分数'],
-      verify: function (w) { return w[0] > 0 && Math.abs(w[0] * (w[0] + m) - t * t) < 1e-9; },
-      hint: 'PB = x + ' + m + '。方べきの定理 PA·PB = PT^2 から、x の 2次方程式を作ろう',
-      explain: ['PB = x + ' + m + ' だから x(x + ' + m + ') = ' + t + '^2', 'x^2 + ' + m + 'x - ' + t * t + ' = 0 より (x - ' + x + ')(x + ' + (x + m) + ') = 0', 'x > 0 より x = ' + x],
-      mistakes: U.mistakes([ans], [{ answers: [F(t * t, m)], tag: 'power-chord', msg: 'PB の代わりに 弦の長さ AB を かけていないかな。PB = x + ' + m }, m1(x + m, 'quad-root', 'それは PB の長さ。求めるのは PA = x(もう一方の解 -' + (x + m) + ' は 長さにならない)'),
-        m1(-(x + m), 'quad-root', '長さは 正の数。x > 0 のほうを 選ぼう')])
     };
   }
 };
@@ -950,23 +1227,7 @@ types['hx-space-tf'] = {
     };
   }
 };
-types['hx-octa'] = {
-  name: '発展: 立方体の中の 正八面体の体積', level: 5,
-  gen: function (R) {
-    const a = R.pick([2, 3, 4, 5, 6, 8]), h = 2, V = Object.assign({}, CUBE.verts), cs = { P: [2, 2, 4], Q: [2, 2, 0], R: [2, 0, 2], S: [4, 2, 2], T: [2, 4, 2], U: [0, 2, 2] }, ans = F(a * a * a, 6);
-    Object.keys(cs).forEach(function (kk) { V[kk] = cs[kk]; });
-    const oe = ['PR', 'PS', 'PT', 'PU', 'QR', 'QS', 'QT', 'QU', 'RS', 'ST', 'TU', 'UR'];
-    const sc = a / 4, base = len(sub(cs.R, cs.S)) * sc, vol = base * base * (h * sc) / 3 * 2;
-    return {
-      text: '1辺の長さが ' + a + ' の立方体の、6つの面の 対角線の交点(面の中心)を結ぶと、正八面体ができる。この正八面体の体積を求めよ。',
-      fig: { type: 'solid', verts: V, edges: CUBE.edges, faces: CUBE.faces, labels: false, segs: oe.map(function (e) { return { e: e, color: 'acc', dash: false }; }) }, form: '□', answers: [ans], keys: ['分数'], num: [vol],
-      hint: '正八面体を、まん中の正方形で 上下 2つの四角錐に 分ける。底面の正方形は、対角線の長さが ' + a,
-      explain: ['まん中の正方形の面積は(対角線)×(対角線)÷2 = ' + a + '×' + a + '÷2 = ' + am(F(a * a, 2)), '四角錐 1つの高さは ' + am(F(a, 2)) + '。体積は {1/3}×' + am(F(a * a, 2)) + '×' + am(F(a, 2)) + ' = ' + am(F(a * a * a, 12)), '2つ分で ' + am(ans)],
-      mistakes: U.mistakes([ans], [{ answers: [F(a * a * a, 12)], tag: 'octa-half', msg: 'それは 四角錐 1つ分。上下 2つ あるよ' }, { answers: [F(a * a * a, 3)], tag: 'octa-base', msg: 'まん中の正方形は、1辺が ' + a + ' ではなく、対角線が ' + a + '。面積は ' + am(F(a * a, 2)) + ' だよ' },
-        { answers: [F(a * a * a, 2)], tag: 'vol-third', msg: '錐の体積は {1/3}×(底面積)×(高さ)。{1/3} を 忘れていないかな' }])
-    };
-  }
-};
+/* 正八面体の体積(もとの hx-octa)は 考査範囲に入ったので、立体の迷宮の rp-octa に移した */
 
 /* ==================== 敵の絵 ==================== */
 const sprites = {
@@ -1021,35 +1282,35 @@ const enemies = {
   ryu: { name: '接弦竜セツゲンドラゴ', sprite: 'b_ryu', boss: true, level: 6, hp: 6, atk: 1.2, line: 'このセツゲンドラゴの 接線と弦の角、見切れるか!', types: ['tc-tri', 'tc-triext', 'tc-iso', 'tc-xy', 'tc-ext', 'tc-quad', 'tc-para'] },
   // 作図の工房
   robo: zako('コンパスロボ', 'robo', ['sk-order-basic', 'sk-center'], { level: 5, hp: 1, atk: 1 }),
-  jougi: zako('じょうぎ兵', 'knight', ['sk-order-adv', 'sk-two-cond', 'sk-ratio'], { level: 6, hp: 1.2, atk: 1, swap: { C: 'Y', W: 'E' } }),
+  jougi: zako('じょうぎ兵', 'knight', ['sk-order-adv', 'sk-two-cond', 'sk-ratio', 'sk-fill'], { level: 6, hp: 1.2, atk: 1, swap: { C: 'Y', W: 'E' } }),
   karakuri: zako('ないぶんカラクリ', 'robo', ['sk-tangent-why', 'sk-circle-center', 'sk-tangent-at'], { level: 7, hp: 1.3, atk: 1, swap: { G: 'N', g: 'n', B: 'R' } }),
   oyakata: { name: '工房長サクズマイスター', sprite: 'b_oyakata', boss: true, level: 8, hp: 6, atk: 1.2, line: 'わしは 工房長サクズマイスター。手順を まちがえる者に、図は かけん!',
-    types: ['sk-order-basic', 'sk-order-adv', 'sk-center', 'sk-two-cond', 'sk-tangent-why', 'sk-ratio', 'sk-circle-center', 'sk-tangent-at'] },
+    types: ['sk-order-basic', 'sk-order-adv', 'sk-center', 'sk-two-cond', 'sk-tangent-why', 'sk-ratio', 'sk-circle-center', 'sk-tangent-at', 'sk-fill'] },
   // 方べきと2円の塔
-  golem: zako('ほうべきゴーレム', 'golem', ['pw-chord', 'pw-frac-root'], { level: 8, hp: 1, atk: 1 }),
+  golem: zako('ほうべきゴーレム', 'golem', ['pw-chord', 'pw-frac-root', 'pw-tan-quad', 'pw-chord-quad'], { level: 8, hp: 1, atk: 1 }),
   ring: zako('ツインサークル', 'ring', ['cc-range', 'cc-tangents', 'cc-relation'], { level: 9, hp: 1.2, atk: 1 }),
   kumo: zako('きょうつうせっせん蜘蛛', 'kumo', ['cc-tanlen', 'pw-frac-root'], { level: 10, hp: 1.3, atk: 1 }),
-  twin: { name: '塔の王ホウベキング', sprite: 'b_twin', boss: true, level: 11, hp: 6, atk: 1.2, line: '塔の王ホウベキングの 方べきの力、その身で 味わうがよい!', types: ['pw-chord', 'pw-frac-root', 'cc-range', 'cc-tangents', 'cc-relation', 'cc-tanlen'] },
+  twin: { name: '塔の王ホウベキング', sprite: 'b_twin', boss: true, level: 11, hp: 6, atk: 1.2, line: '塔の王ホウベキングの 方べきの力、その身で 味わうがよい!', types: ['pw-chord', 'pw-frac-root', 'cc-range', 'cc-tangents', 'cc-relation', 'cc-tanlen', 'pw-tan-quad', 'pw-chord-quad'] },
   // 立体の迷宮
-  ghost: zako('ねじれゴースト', 'rei', ['sp-face-edges', 'sp-perp-word', 'sp-prism-rel'], { level: 10, hp: 1, atk: 1 }),
-  gargoyle: zako('ちょっこうガーゴイル', 'gargoyle', ['sp-angle', 'sp-prism-angle'], { level: 11, hp: 1.2, atk: 1 }),
-  kishi: zako('しめんたい騎士', 'knight', ['rp-calc', 'rp-five', 'rp-tetra', 'sp-cut-volume', 'soccer'], { level: 12, hp: 1.3, atk: 1, swap: { C: 'T', W: 'W', G: 'C', g: 'B' } }),
+  ghost: zako('ねじれゴースト', 'rei', ['sp-face-edges', 'sp-perp-word', 'sp-prism-rel', 'sp-planes', 'sp-perp-plane'], { level: 10, hp: 1, atk: 1 }),
+  gargoyle: zako('ちょっこうガーゴイル', 'gargoyle', ['sp-angle', 'sp-prism-angle', 'sp-box'], { level: 11, hp: 1.2, atk: 1 }),
+  kishi: zako('しめんたい騎士', 'knight', ['rp-calc', 'rp-five', 'rp-tetra', 'sp-cut-volume', 'soccer', 'rp-octa', 'rp-octa-edge'], { level: 12, hp: 1.3, atk: 1, swap: { C: 'T', W: 'W', G: 'C', g: 'B' } }),
   poly: { name: '迷宮の主ポリヘドロン', sprite: 'b_poly', boss: true, level: 14, hp: 7, atk: 1.2, line: 'われは 迷宮の主ポリヘドロン。頂点、辺、面……数え落としは ゆるさぬ。',
-    types: ['sp-face-edges', 'sp-angle', 'sp-prism-rel', 'sp-prism-angle', 'rp-calc', 'rp-tetra', 'sp-cut-volume', 'soccer'] },
+    types: ['sp-face-edges', 'sp-angle', 'sp-prism-rel', 'sp-prism-angle', 'rp-calc', 'rp-tetra', 'sp-cut-volume', 'soccer', 'sp-perp-plane', 'sp-planes', 'sp-box', 'rp-octa', 'rp-octa-edge'] },
   // 魔王の城(各エリアの上位種)
   g_komori: zako('城の衛兵・ブラッドコウモリ', 'komori', ['tc-triext', 'tc-xy', 'tc-quad', 'tc-para'], { level: 20, hp: 1.2, atk: 1, swap: { r: 'v', R: 'p' } }),
-  g_ring: zako('城の衛兵・ダークサークル', 'ring', ['pw-chord', 'pw-frac-root', 'cc-tanlen', 'cc-range'], { level: 20, hp: 1.3, atk: 1, swap: { Y: 'R' } }),
-  g_robo: zako('城の衛兵・コンパスロボ改', 'robo', ['sk-order-adv', 'sk-two-cond', 'sk-tangent-why', 'sk-ratio'], { level: 21, hp: 1.3, atk: 1, swap: { G: 'v', g: 'K', Y: 'R', B: 'Y' } }),
-  g_gargoyle: zako('城の衛兵・ストーンガーゴイル', 'gargoyle', ['sp-angle', 'sp-prism-angle', 'sp-cut-volume', 'soccer'], { level: 21, hp: 1.4, atk: 1, swap: { G: 'R', g: 'r', R: 'Y' } }),
+  g_ring: zako('城の衛兵・ダークサークル', 'ring', ['pw-chord', 'pw-frac-root', 'cc-tanlen', 'cc-range', 'pw-tan-quad', 'pw-chord-quad'], { level: 20, hp: 1.3, atk: 1, swap: { Y: 'R' } }),
+  g_robo: zako('城の衛兵・コンパスロボ改', 'robo', ['sk-order-adv', 'sk-two-cond', 'sk-tangent-why', 'sk-ratio', 'sk-fill'], { level: 21, hp: 1.3, atk: 1, swap: { G: 'v', g: 'K', Y: 'R', B: 'Y' } }),
+  g_gargoyle: zako('城の衛兵・ストーンガーゴイル', 'gargoyle', ['sp-angle', 'sp-prism-angle', 'sp-cut-volume', 'soccer', 'sp-perp-plane', 'sp-box', 'rp-octa', 'rp-octa-edge'], { level: 21, hp: 1.4, atk: 1, swap: { G: 'R', g: 'r', R: 'Y' } }),
   maou: { name: '図形魔王ジオメトラ', sprite: 'b_maou', boss: true, level: 23, hp: 8, atk: 1.2, line: 'われこそは 図形魔王ジオメトラ。円も 立体も、すべては わが手の中!', swap: { v: 'b', V: 'B', G: 'C', g: 't' },
     types: ['tc-tri', 'tc-xy', 'pw-chord', 'cc-range', 'cc-tangents', 'sk-order-adv', 'sk-two-cond', 'sp-face-edges', 'rp-calc'],
-    phase2: { name: '真・図形魔王ジオメトラ', line: 'ジオメトラの 真のすがた……ここからが 本当の 考査だ!', swap: { v: 'r', V: 'R', G: 'g', g: 'K', R: 'Y' }, types: ['tc-triext', 'tc-quad', 'tc-para', 'pw-frac-root', 'cc-tanlen', 'sk-tangent-why', 'sk-ratio', 'sp-angle', 'sp-prism-angle', 'sp-cut-volume', 'soccer'] } },
+    phase2: { name: '真・図形魔王ジオメトラ', line: 'ジオメトラの 真のすがた……ここからが 本当の 考査だ!', swap: { v: 'r', V: 'R', G: 'g', g: 'K', R: 'Y' }, types: ['tc-triext', 'tc-quad', 'tc-para', 'pw-frac-root', 'cc-tanlen', 'sk-tangent-why', 'sk-ratio', 'sp-angle', 'sp-prism-angle', 'sp-cut-volume', 'soccer', 'sk-fill', 'sp-box', 'rp-octa'] } },
   // 隠し
-  kage: zako('失われた補助線の影', 'rei', ['hx-two-tangents', 'hx-power-quad'], { level: 25, hp: 1.2, atk: 1, swap: { p: 'v', W: 'R' } }),
+  kage: zako('失われた補助線の影', 'rei', ['hx-two-tangents'], { level: 25, hp: 1.2, atk: 1, swap: { p: 'v', W: 'R' } }),
   bourei: zako('忘れられた円の亡霊', 'ring', ['hx-power-twice', 'hx-radius-letter'], { level: 26, hp: 1.3, atk: 1, swap: { Y: 'p' } }),
-  kataribe: zako('封じられた空間の語り部', 'madoushi', ['hx-plane', 'hx-space-tf', 'hx-octa'], { level: 26, hp: 1.3, atk: 1 }),
+  kataribe: zako('封じられた空間の語り部', 'madoushi', ['hx-plane', 'hx-space-tf'], { level: 26, hp: 1.3, atk: 1 }),
   guard: { name: '失われた定理の番人', sprite: 'b_guard', boss: true, level: 28, hp: 7, atk: 1.2, line: 'わたしは 失われた定理の番人。教科書の 外へ ようこそ。覚悟は あるか。', swap: { b: 'v', B: 'p' },
-    types: ['hx-two-tangents', 'hx-power-quad', 'hx-power-twice', 'hx-radius-letter', 'hx-plane', 'hx-space-tf', 'hx-octa'] }
+    types: ['hx-two-tangents', 'hx-power-twice', 'hx-radius-letter', 'hx-plane', 'hx-space-tf'] }
 };
 
 /* ==================== マップ ==================== */
